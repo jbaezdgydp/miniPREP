@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Centro de Mando - PREP Tlaxcala</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 font-sans antialiased text-gray-800">
+
+    <!-- HEADER -->
+    <nav class="bg-red-800 text-white shadow-md p-4 sticky top-0 z-40 flex justify-between items-center">
+        <div class="flex items-center">
+            <i class="fas fa-chart-line text-2xl mr-3"></i>
+            <h1 class="text-xl font-bold uppercase">PREP Interno - Centro de Mando</h1>
+        </div>
+        <button onclick="cargarDatos()" class="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg font-bold shadow transition flex items-center">
+            <i class="fas fa-sync-alt mr-2"></i> Actualizar Datos
+        </button>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        
+        <!-- CONTROLES Y KPIs -->
+        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6 flex flex-wrap items-center justify-between gap-4">
+            
+            <div class="flex-1 min-w-[200px]">
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Visualizar Elección</label>
+                <select id="filtroEleccion" onchange="cambioDeEleccion()" class="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-bold focus:outline-none focus:border-red-500 bg-gray-50">
+                    <option value="Gobernador">Gobernador (Estatal)</option>
+                    <option value="Diputaciones Federales">Diputaciones Federales</option>
+                    <option value="Diputaciones Locales">Diputaciones Locales</option>
+                    <option value="Ayuntamientos">Ayuntamientos (Presidencias Municipales)</option>
+                    <option value="Presidencia de Comunidad">Presidencia de Comunidad</option>
+                </select>
+            </div>
+            
+            <!-- NUEVO FILTRO GEOGRÁFICO DINÁMICO -->
+            <div id="contenedorFiltroGeo" class="flex-1 min-w-[200px] hidden">
+                <label id="labelFiltroGeo" class="block text-xs font-bold text-indigo-500 uppercase mb-1">Selecciona Demarcación</label>
+                <select id="filtroGeo" onchange="cambioDeZona()" class="w-full border border-indigo-300 rounded-md px-3 py-2 text-lg font-bold text-indigo-900 focus:outline-none focus:border-indigo-500 bg-indigo-50 shadow-inner">
+                    <!-- Se llena automáticamente con JavaScript -->
+                </select>
+            </div>
+
+            <div class="text-right pl-4 border-l">
+                <p class="text-sm text-gray-500 font-bold uppercase">Actas Computadas</p>
+                <p id="kpiActas" class="text-3xl font-black text-red-700">0</p>
+            </div>
+            <div class="text-right border-l pl-4">
+                <p class="text-sm text-gray-500 font-bold uppercase">Total de Votos</p>
+                <p id="kpiVotos" class="text-3xl font-black text-blue-700">0</p>
+            </div>
+        </div>
+
+        <!-- SIMULADOR DE ALIANZAS -->
+        <div class="bg-white p-4 rounded-lg shadow-sm border border-indigo-200 mb-6 bg-indigo-50/30">
+            <div class="flex justify-between items-center mb-3 cursor-pointer" onclick="toggleAlianzas()">
+                <h3 class="font-bold text-indigo-900 uppercase text-sm"><i class="fas fa-object-group mr-2"></i>Configurador de Alianzas 2027</h3>
+                <i id="iconoAlianzas" class="fas fa-chevron-down text-indigo-600"></i>
+            </div>
+            
+            <div id="panelAlianzas" class="hidden">
+                <p class="text-xs text-indigo-700 mb-4">Agrupa a los partidos para sumar sus votos automáticamente en la gráfica. Los votos nulos e independientes no se agrupan.</p>
+                <div id="gridAlianzas" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                    <!-- Los selectores se generan desde JavaScript -->
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICA PRINCIPAL -->
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+            <h2 class="text-lg font-bold text-gray-800 mb-4 uppercase border-b pb-2">Tendencia de Votación</h2>
+            <div class="relative h-[450px] w-full">
+                <canvas id="graficaVotos"></canvas>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // 1. CONFIGURACIÓN SUPABASE
+        const supabaseUrl = 'https://rllgivghmdvblycawraf.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsbGdpdmdobWR2Ymx5Y2F3cmFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNDI0NTEsImV4cCI6MjEwODcxODQ1MX0.DYr6vGxBaJUSiEYKlUsz4B3J1UNZ4STRyfg7Mz4-MC4';
+        const cliente = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        let datosGlobales = []; 
+        let miGrafica = null;   
+
+        // 2. CONFIGURACIÓN DE PARTIDOS Y ALIANZAS
+        const plantillaPartidos = [
+            { key: 'total_pan', label: 'PAN', color: '#1d4ed8' },
+            { key: 'total_pri', label: 'PRI', color: '#b91c1c' },
+            { key: 'total_prdt', label: 'PRD', color: '#eab308' },
+            { key: 'total_pt', label: 'PT', color: '#b91c1c' },
+            { key: 'total_pvem', label: 'PVEM', color: '#16a34a' },
+            { key: 'total_mc', label: 'MC', color: '#f97316' },
+            { key: 'total_morena', label: 'MORENA', color: '#7f1d1d' },
+            { key: 'total_pac', label: 'PAC', color: '#7e22ce' },
+            { key: 'total_rsp', label: 'RSP', color: '#374151' },
+            { key: 'total_fxm', label: 'FxM', color: '#ec4899' },
+            { key: 'total_somos', label: 'Somos MX', color: '#1e3a8a' },
+            { key: 'total_paz', label: 'PAZ', color: '#581c87' },
+            { key: 'total_panal', label: 'PANAL', color: '#14b8a6' },
+            { key: 'total_ind', label: 'Indep.', color: '#6b7280', esFijo: true },
+            { key: 'total_nulos', label: 'Nulos', color: '#000000', esFijo: true }
+        ];
+
+        // Memoria dinámica: Guardará configuraciones separadas por cada "Elección + Zona"
+        let memoriaAlianzas = {}; 
+
+        function obtenerClaveZonaActual() {
+            const eleccion = document.getElementById('filtroEleccion').value;
+            const geo = document.getElementById('filtroGeo') ? document.getElementById('filtroGeo').value : '';
+            return `${eleccion}|${geo}`;
+        }
+
+        function obtenerEstadoAlianzas() {
+            const clave = obtenerClaveZonaActual();
+            // Si es la primera vez que vemos esta zona, le creamos un historial limpio (Individual)
+            if (!memoriaAlianzas[clave]) {
+                memoriaAlianzas[clave] = {};
+                plantillaPartidos.forEach((partido, index) => {
+                    memoriaAlianzas[clave][index] = partido.esFijo ? 'Fijo' : 'Ind';
+                });
+            }
+            return memoriaAlianzas[clave];
+        }
+
+        // 3. INICIALIZAR PANEL DE ALIANZAS
+        function inicializarPanelAlianzas() {
+            const grid = document.getElementById('gridAlianzas');
+            grid.innerHTML = '';
+            
+            const estadoActual = obtenerEstadoAlianzas();
+
+            plantillaPartidos.forEach((partido, index) => {
+                if (partido.esFijo) return; 
+
+                const grupoActual = estadoActual[index];
+                const div = document.createElement('div');
+                div.innerHTML = `
+                    <label class="block text-[10px] font-bold uppercase mb-1" style="color: ${partido.color}">${partido.label}</label>
+                    <select onchange="cambiarAlianza(${index}, this.value)" class="w-full border border-indigo-200 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 bg-white">
+                        <option value="Ind" ${grupoActual === 'Ind' ? 'selected' : ''}>Individual</option>
+                        <option value="Alianza A" ${grupoActual === 'Alianza A' ? 'selected' : ''}>Alianza A</option>
+                        <option value="Alianza B" ${grupoActual === 'Alianza B' ? 'selected' : ''}>Alianza B</option>
+                        <option value="Alianza C" ${grupoActual === 'Alianza C' ? 'selected' : ''}>Alianza C</option>
+                    </select>
+                `;
+                grid.appendChild(div);
+            });
+        }
+
+        function cambiarAlianza(index, nuevoGrupo) {
+            const estadoActual = obtenerEstadoAlianzas();
+            estadoActual[index] = nuevoGrupo;
+            actualizarDashboard();
+        }
+
+        function toggleAlianzas() {
+            const panel = document.getElementById('panelAlianzas');
+            const icono = document.getElementById('iconoAlianzas');
+            if (panel.classList.contains('hidden')) {
+                panel.classList.remove('hidden');
+                icono.classList.replace('fa-chevron-down', 'fa-chevron-up');
+            } else {
+                panel.classList.add('hidden');
+                icono.classList.replace('fa-chevron-up', 'fa-chevron-down');
+            }
+        }
+
+        // 4. LÓGICA DE FILTROS DINÁMICOS
+        function cambioDeZona() {
+            inicializarPanelAlianzas();
+            actualizarDashboard();
+        }
+
+        function cambioDeEleccion() {
+            const eleccion = document.getElementById('filtroEleccion').value;
+            const contenedor = document.getElementById('contenedorFiltroGeo');
+            const label = document.getElementById('labelFiltroGeo');
+            const select = document.getElementById('filtroGeo');
+            
+            select.innerHTML = '';
+            
+            if (eleccion === 'Gobernador') {
+                contenedor.classList.add('hidden');
+            } else {
+                contenedor.classList.remove('hidden');
+                let valoresUnicos = new Set();
+                
+                datosGlobales.filter(d => d.tipo_eleccion === eleccion).forEach(d => {
+                    if (eleccion === 'Diputaciones Federales' && d.distrito_federal) {
+                        label.innerText = 'Distrito Federal';
+                        valoresUnicos.add(d.distrito_federal);
+                    }
+                    if (eleccion === 'Diputaciones Locales' && d.distrito_local) {
+                        label.innerText = 'Distrito Local';
+                        valoresUnicos.add(d.distrito_local);
+                    }
+                    if (eleccion === 'Ayuntamientos' && d.municipio) {
+                        label.innerText = 'Municipio';
+                        valoresUnicos.add(d.municipio);
+                    }
+                    if (eleccion === 'Presidencia de Comunidad' && d.municipio) {
+                        label.innerText = 'Municipio - Comunidad';
+                        const nombreComunidad = d.comunidad || 'Sin comunidad asignada';
+                        valoresUnicos.add(`${d.municipio} - ${nombreComunidad}`);
+                    }
+                });
+                
+                const arrayOrdenado = [...valoresUnicos].sort((a, b) => {
+                    const numA = parseInt(a); const numB = parseInt(b);
+                    if(!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                    return String(a).localeCompare(String(b));
+                });
+
+                if (arrayOrdenado.length === 0) {
+                    select.innerHTML = '<option value="">Sin actas registradas aún</option>';
+                } else {
+                    arrayOrdenado.forEach(val => {
+                        const textoOpcion = eleccion.includes('Diputaciones') ? `Distrito ${val}` : val;
+                        select.innerHTML += `<option value="${val}">${textoOpcion}</option>`;
+                    });
+                }
+            }
+            
+            inicializarPanelAlianzas();
+            actualizarDashboard();
+        }
+
+        // 5. CONSULTA A LA BASE DE DATOS
+        async function cargarDatos() {
+            const { data, error } = await cliente.from('vista_resultados_totales').select('*');
+            if (error) return alert("Error al cargar resultados.");
+            datosGlobales = data || [];
+            actualizarDashboard();
+        }
+
+        // 6. DIBUJAR / ACTUALIZAR EL DASHBOARD (CON SUMATORIA GEOGRÁFICA)
+        function actualizarDashboard() {
+            const eleccion = document.getElementById('filtroEleccion').value;
+            const geo = document.getElementById('filtroGeo').value;
+            
+            // A) Filtramos por tipo de elección Y por nivel geográfico
+            let datosFiltrados = datosGlobales.filter(d => d.tipo_eleccion === eleccion);
+            
+            if (eleccion !== 'Gobernador' && geo) {
+                if (eleccion === 'Diputaciones Federales') {
+                    datosFiltrados = datosFiltrados.filter(d => String(d.distrito_federal) === String(geo));
+                } else if (eleccion === 'Diputaciones Locales') {
+                    datosFiltrados = datosFiltrados.filter(d => String(d.distrito_local) === String(geo));
+                } else if (eleccion === 'Ayuntamientos') {
+                    datosFiltrados = datosFiltrados.filter(d => d.municipio === geo);
+                } else if (eleccion === 'Presidencia de Comunidad') {
+                    datosFiltrados = datosFiltrados.filter(d => {
+                        const com = d.comunidad || 'Sin comunidad asignada';
+                        return `${d.municipio} - ${com}` === geo;
+                    });
+                }
+            }
+
+            // B) Sumamos todas las filas que pasaron el filtro
+            const dataAcumulada = { actas_computadas: 0, gran_total_votos: 0 };
+            plantillaPartidos.forEach(p => dataAcumulada[p.key] = 0);
+            
+            datosFiltrados.forEach(row => {
+                dataAcumulada.actas_computadas += parseInt(row.actas_computadas) || 0;
+                dataAcumulada.gran_total_votos += parseInt(row.gran_total_votos) || 0;
+                plantillaPartidos.forEach(p => {
+                    dataAcumulada[p.key] += parseInt(row[p.key]) || 0;
+                });
+            });
+
+            // Actualizamos Contadores (KPIs)
+            document.getElementById('kpiActas').innerText = dataAcumulada.actas_computadas.toLocaleString();
+            document.getElementById('kpiVotos').innerText = dataAcumulada.gran_total_votos.toLocaleString();
+
+            // C) Lógica de Alianzas para la gráfica
+            let etiquetas = []; let valores = []; let colores = [];
+            let alianzasAcumuladas = {
+                'Alianza A': { votos: 0, nombres: [], colorBase: '#4f46e5' },
+                'Alianza B': { votos: 0, nombres: [], colorBase: '#dc2626' },
+                'Alianza C': { votos: 0, nombres: [], colorBase: '#059669' }
+            };
+
+            // Solicitamos el estado exacto de la zona que estamos viendo actualmente
+            const estadoActual = obtenerEstadoAlianzas();
+
+            plantillaPartidos.forEach((partido, index) => {
+                const votosPartido = dataAcumulada[partido.key] || 0;
+                
+                // Leemos del estado actual en lugar de la variable global antigua
+                const grupoActual = estadoActual[index]; 
+
+                if (grupoActual === 'Ind' || grupoActual === 'Fijo') {
+                    etiquetas.push(partido.label);
+                    valores.push(votosPartido);
+                    colores.push(partido.color);
+                } else {
+                    alianzasAcumuladas[grupoActual].votos += votosPartido;
+                    alianzasAcumuladas[grupoActual].nombres.push(partido.label);
+                    if (alianzasAcumuladas[grupoActual].nombres.length === 1) {
+                        alianzasAcumuladas[grupoActual].colorBase = partido.color;
+                    }
+                }
+            });
+
+            Object.keys(alianzasAcumuladas).forEach(nombreAlianza => {
+                const alianza = alianzasAcumuladas[nombreAlianza];
+                if (alianza.nombres.length > 0) {
+                    etiquetas.push(alianza.nombres.join(' - '));
+                    valores.push(alianza.votos);
+                    colores.push(alianza.colorBase);
+                }
+            });
+
+            renderizarGrafica(etiquetas, valores, colores);
+        }
+
+        // 7. INICIALIZAR CHART.JS
+        function renderizarGrafica(etiquetas, valores, colores) {
+            const ctx = document.getElementById('graficaVotos').getContext('2d');
+            if (miGrafica) miGrafica.destroy();
+            miGrafica = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: etiquetas,
+                    datasets: [{
+                        label: 'Votos', data: valores, backgroundColor: colores, borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f3f4f6' } },
+                        x: { grid: { display: false }, ticks: { font: { weight: 'bold' } } }
+                    }
+                }
+            });
+        }
+
+        // 8. CONEXIÓN EN TIEMPO REAL
+        function iniciarSuscripcionRealtime() {
+            cliente
+                .channel('actas_nuevas')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'resultados_actas' }, (payload) => {
+                    const btn = document.querySelector('nav button');
+                    const txtObj = btn.innerHTML;
+                    btn.innerHTML = `<i class="fas fa-bolt text-yellow-300 mr-2"></i> ¡Nuevos Votos!`;
+                    btn.classList.replace('bg-red-600', 'bg-green-600');
+                    setTimeout(() => {
+                        btn.innerHTML = txtObj;
+                        btn.classList.replace('bg-green-600', 'bg-red-600');
+                    }, 2000);
+                    
+                    cargarDatos(); // Descarga los datos nuevos y actualiza la gráfica sin perder el filtro actual
+                })
+                .subscribe();
+        }
+
+        // 9. ARRANQUE PRINCIPAL
+        window.addEventListener('DOMContentLoaded', async () => {
+            await cargarDatos();
+            cambioDeEleccion(); // Esto carga los filtros geográficos y las alianzas en base al primer dropdown
+            iniciarSuscripcionRealtime();
+        });
+    </script>
+</body>
+</html>
