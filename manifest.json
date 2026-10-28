@@ -1,0 +1,15 @@
+{
+  "name": "miniPREP Tlaxcala",
+  "short_name": "miniPREP",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#581c87",
+  "theme_color": "#581c87",
+  "icons": [
+    {
+      "src": "icono-miniprep.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
