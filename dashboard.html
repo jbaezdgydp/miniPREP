@@ -61,6 +61,10 @@
                 <p id="kpiActas" class="text-3xl font-black text-red-700">0</p>
             </div>
             <div class="text-right border-l pl-4">
+                <p class="text-sm text-gray-500 font-bold uppercase">Actas Faltantes</p>
+                <p id="kpiFaltantes" class="text-3xl font-black text-amber-600">0</p>
+            </div>
+            <div class="text-right border-l pl-4">
                 <p class="text-sm text-gray-500 font-bold uppercase">Total de Votos</p>
                 <p id="kpiVotos" class="text-3xl font-black text-blue-700">0</p>
             </div>
@@ -75,6 +79,14 @@
             
             <div id="panelAlianzas" class="hidden">
                 <p class="text-xs text-indigo-700 mb-4">Agrupa a los partidos para sumar sus votos automáticamente en la gráfica. Los votos nulos e independientes no se agrupan.</p>
+                <div class="flex flex-wrap items-center gap-2 mb-4">
+                    <button type="button" id="btnAccesoAlianzas" onclick="mostrarAccesoAlianzas()" class="bg-indigo-700 text-white text-xs font-bold px-3 py-2 rounded">🔐 Acceso autorizado</button>
+                    <button type="button" id="btnGuardarAlianzas" onclick="guardarAlianzas()" class="hidden bg-green-700 text-white text-xs font-bold px-3 py-2 rounded">💾 Guardar alianzas</button>
+                    <button type="button" onclick="restaurarAlianzas()" class="bg-gray-200 text-gray-800 text-xs font-bold px-3 py-2 rounded">↩ Restaurar configuración guardada</button>
+                    <button type="button" id="btnAdministrarPermisos" onclick="abrirPanelPermisos()" class="hidden bg-purple-800 text-white text-xs font-bold px-3 py-2 rounded">⚙️ Administrar permisos</button>
+                    <button type="button" id="btnSalirAlianzas" onclick="salirAlianzas()" class="hidden bg-gray-200 text-xs px-3 py-2 rounded">Cerrar sesión</button>
+                    <span id="estadoGuardadoAlianzas" class="text-xs text-indigo-700" role="status" aria-live="polite">Las simulaciones no se guardan automáticamente.</span>
+                </div>
                 <div id="gridAlianzas" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                     <!-- Los selectores se generan desde JavaScript -->
                 </div>
@@ -91,12 +103,45 @@
 
     </main>
 
+    <div id="modalAccesoAlianzas" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+        <form onsubmit="accederAlianzas(event)" class="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm space-y-3">
+            <h2 class="text-lg font-bold">Acceso para guardar alianzas</h2>
+            <label class="block text-sm">Correo electrónico<input id="correoAlianzas" type="email" autocomplete="username" required class="block w-full border rounded p-2 mt-1"></label>
+            <label class="block text-sm">Contraseña<input id="claveAlianzas" type="password" autocomplete="current-password" required class="block w-full border rounded p-2 mt-1"></label>
+            <p id="errorAccesoAlianzas" class="text-red-700 text-xs" role="alert"></p>
+            <div class="flex gap-2 justify-end">
+                <button type="button" onclick="cerrarAccesoAlianzas()" class="px-3 py-2 border rounded">Cancelar</button>
+                <button type="submit" id="btnIngresarAlianzas" class="px-3 py-2 bg-indigo-700 text-white rounded">Ingresar</button>
+            </div>
+        </form>
+    </div>
+
+    <div id="modalPermisos" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="tituloPermisos">
+        <div class="bg-white rounded-lg shadow-xl p-5 w-full max-w-2xl max-h-[85vh] overflow-auto">
+            <div class="flex items-center justify-between gap-3 mb-3">
+                <h2 id="tituloPermisos" class="text-lg font-bold">Administrar permisos para guardar alianzas</h2>
+                <button type="button" onclick="cerrarPanelPermisos()" class="border rounded px-3 py-1">Cerrar</button>
+            </div>
+            <p class="text-sm text-gray-600 mb-3">Solo el administrador principal puede cambiar estos permisos. Los roles de captura no se modifican.</p>
+            <p id="mensajePermisos" class="text-sm mb-3" role="status" aria-live="polite"></p>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border-collapse">
+                    <thead><tr class="bg-gray-100 text-left"><th class="p-2">Usuario</th><th class="p-2">Rol</th><th class="p-2">Puede guardar alianzas</th></tr></thead>
+                    <tbody id="tablaPermisos"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <script>
         // 1. CONFIGURACIÓN SUPABASE
         const supabaseUrl = 'https://rllgivghmdvblycawraf.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsbGdpdmdobWR2Ymx5Y2F3cmFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNDI0NTEsImV4cCI6MjEwODcxODQ1MX0.DYr6vGxBaJUSiEYKlUsz4B3J1UNZ4STRyfg7Mz4-MC4';
         const cliente = window.supabase.createClient(supabaseUrl, supabaseKey);
 
+        const TOTAL_CASILLAS_ESTATAL = 1720;
+        let catalogoCasillas = [];
+        let catalogoCasillasListo = false;
         let datosGlobales = []; 
         let miGrafica = null;   
 
@@ -120,7 +165,233 @@
         ];
 
         // Memoria dinámica: Guardará configuraciones separadas por cada "Elección + Zona"
-        let memoriaAlianzas = {}; 
+        let memoriaAlianzas = {};
+        const alianzasGuardadas = new Map();
+        let puedeGuardarAlianzas = false;
+        let usuarioAlianzas = null;
+        let esPrincipalAlianzas = false;
+        let solicitudZonaAlianzas = 0;
+        const alianzasCargadasDesdeBD = new Set();
+
+        function claveAlianzasBD() {
+            return {
+                tipo_eleccion: document.getElementById('filtroEleccion').value,
+                demarcacion: document.getElementById('filtroEleccion').value === 'Gobernador'
+                    ? '' : document.getElementById('filtroGeo').value
+            };
+        }
+
+        function estadoIndividual() {
+            const estado = {};
+            plantillaPartidos.forEach((p, i) => estado[i] = p.esFijo ? 'Fijo' : 'Ind');
+            return estado;
+        }
+
+        function limpiarConfiguracion(raw) {
+            const estado = estadoIndividual();
+            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                plantillaPartidos.forEach((p, i) => {
+                    if (!p.esFijo && ['Ind', 'Alianza A', 'Alianza B', 'Alianza C'].includes(raw[i])) {
+                        estado[i] = raw[i];
+                    }
+                });
+            }
+            return estado;
+        }
+
+        function estadoAlianzasMensaje(mensaje, error = false) {
+            const el = document.getElementById('estadoGuardadoAlianzas');
+            el.textContent = mensaje;
+            el.classList.toggle('text-red-700', error);
+        }
+
+        async function cargarAlianzasZona() {
+            const clave = obtenerClaveZonaActual();
+            const secuencia = ++solicitudZonaAlianzas;
+            // Una simulación que ya exista en memoria no se sobrescribe al cambiar de filtro.
+            if (alianzasCargadasDesdeBD.has(clave)) {
+                inicializarPanelAlianzas();
+                actualizarDashboard();
+                return;
+            }
+            try {
+                const { tipo_eleccion, demarcacion } = claveAlianzasBD();
+                const { data, error } = await cliente.from('configuraciones_alianzas')
+                    .select('configuracion')
+                    .eq('tipo_eleccion', tipo_eleccion)
+                    .eq('demarcacion', demarcacion)
+                    .maybeSingle();
+                if (error) throw error;
+                if (data) alianzasGuardadas.set(clave, limpiarConfiguracion(data.configuracion));
+                if (secuencia !== solicitudZonaAlianzas || clave !== obtenerClaveZonaActual()) return;
+                memoriaAlianzas[clave] = data ? limpiarConfiguracion(data.configuracion) : estadoIndividual();
+                alianzasCargadasDesdeBD.add(clave);
+                inicializarPanelAlianzas();
+                actualizarDashboard();
+                estadoAlianzasMensaje(data ? 'Configuración general recuperada.' : 'Sin configuración general: simulación individual.');
+            } catch (err) {
+                console.error('No se pudieron recuperar alianzas:', err);
+                if (secuencia !== solicitudZonaAlianzas || clave !== obtenerClaveZonaActual()) return;
+                memoriaAlianzas[clave] = estadoIndividual();
+                inicializarPanelAlianzas();
+                actualizarDashboard();
+                estadoAlianzasMensaje('No fue posible consultar las alianzas guardadas.', true);
+            }
+        }
+
+        async function restaurarAlianzas() {
+            const clave = obtenerClaveZonaActual();
+            delete memoriaAlianzas[clave];
+            alianzasCargadasDesdeBD.delete(clave);
+            await cargarAlianzasZona();
+        }
+
+        function mostrarAccesoAlianzas() {
+            document.getElementById('errorAccesoAlianzas').textContent = '';
+            document.getElementById('modalAccesoAlianzas').classList.remove('hidden');
+        }
+        function cerrarAccesoAlianzas() {
+            document.getElementById('claveAlianzas').value = '';
+            document.getElementById('modalAccesoAlianzas').classList.add('hidden');
+        }
+        function mostrarPermisosAlianzas() {
+            document.getElementById('btnGuardarAlianzas').classList.toggle('hidden', !puedeGuardarAlianzas);
+            document.getElementById('btnSalirAlianzas').classList.toggle('hidden', !usuarioAlianzas);
+            document.getElementById('btnAccesoAlianzas').classList.toggle('hidden', !!usuarioAlianzas);
+            document.getElementById('btnAdministrarPermisos').classList.toggle('hidden', !esPrincipalAlianzas);
+        }
+        async function verificarPermisoAlianzas() {
+            const { data: sesion, error: errSesion } = await cliente.auth.getUser();
+            usuarioAlianzas = !errSesion ? sesion?.user : null;
+            puedeGuardarAlianzas = false;
+            esPrincipalAlianzas = false;
+            if (usuarioAlianzas) {
+                const { data: principal, error: errorPrincipal } = await cliente.rpc('es_administrador_principal_alianzas');
+                if (errorPrincipal) console.error('Error al comprobar administrador principal:', errorPrincipal);
+                else esPrincipalAlianzas = principal === true;
+                const { data, error } = await cliente.rpc('puede_guardar_alianzas');
+                if (error) console.error('Error al comprobar permiso de alianzas:', error);
+                else puedeGuardarAlianzas = data === true;
+            }
+            mostrarPermisosAlianzas();
+        }
+        async function accederAlianzas(event) {
+            event.preventDefault();
+            const boton = document.getElementById('btnIngresarAlianzas');
+            boton.disabled = true;
+            try {
+                const email = document.getElementById('correoAlianzas').value.trim();
+                const password = document.getElementById('claveAlianzas').value;
+                const { error } = await cliente.auth.signInWithPassword({ email, password });
+                if (error) throw error;
+                await verificarPermisoAlianzas();
+                if (!puedeGuardarAlianzas) {
+                    await cliente.auth.signOut();
+                    await verificarPermisoAlianzas();
+                    throw new Error('Esta cuenta no está autorizada para guardar alianzas.');
+                }
+                cerrarAccesoAlianzas();
+                estadoAlianzasMensaje('Sesión autorizada. Puedes guardar la configuración actual.');
+            } catch (err) {
+                document.getElementById('errorAccesoAlianzas').textContent = err.message;
+            } finally {
+                boton.disabled = false;
+            }
+        }
+        async function salirAlianzas() {
+            cerrarPanelPermisos();
+            await cliente.auth.signOut();
+            await verificarPermisoAlianzas();
+            estadoAlianzasMensaje('Sesión cerrada. Puedes seguir simulando alianzas.');
+        }
+        function cerrarPanelPermisos() {
+            document.getElementById('modalPermisos').classList.add('hidden');
+        }
+        async function abrirPanelPermisos() {
+            if (!esPrincipalAlianzas) return;
+            document.getElementById('modalPermisos').classList.remove('hidden');
+            await actualizarTablaPermisos();
+        }
+        async function actualizarTablaPermisos() {
+            const tabla = document.getElementById('tablaPermisos');
+            const mensaje = document.getElementById('mensajePermisos');
+            tabla.replaceChildren();
+            mensaje.textContent = 'Consultando usuarios…';
+            try {
+                const { data, error } = await cliente.rpc('listar_permisos_alianzas');
+                if (error) throw error;
+                for (const usuario of data || []) {
+                    const fila = document.createElement('tr');
+                    fila.className = 'border-b';
+                    const nombre = document.createElement('td');
+                    nombre.className = 'p-2';
+                    nombre.textContent = usuario.nombre_completo || '(Sin nombre)';
+                    const rol = document.createElement('td');
+                    rol.className = 'p-2';
+                    rol.textContent = usuario.rol || '—';
+                    const permiso = document.createElement('td');
+                    permiso.className = 'p-2';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = usuario.autorizado;
+                    checkbox.disabled = usuario.es_principal;
+                    checkbox.setAttribute('aria-label', 'Permitir guardar alianzas a ' + usuario.nombre_completo);
+                    checkbox.addEventListener('change', async () => {
+                        const nuevo = checkbox.checked;
+                        checkbox.disabled = true;
+                        mensaje.textContent = 'Guardando permiso…';
+                        try {
+                            const { error } = await cliente.rpc('cambiar_permiso_alianzas', {
+                                p_id_usuario: usuario.id_usuario,
+                                p_autorizado: nuevo
+                            });
+                            if (error) throw error;
+                            usuario.autorizado = nuevo;
+                            mensaje.textContent = 'Permiso actualizado para ' + usuario.nombre_completo + '.';
+                        } catch (err) {
+                            checkbox.checked = usuario.autorizado;
+                            mensaje.textContent = 'No se pudo cambiar el permiso: ' + err.message;
+                        } finally {
+                            checkbox.disabled = usuario.es_principal;
+                        }
+                    });
+                    permiso.appendChild(checkbox);
+                    if (usuario.es_principal) permiso.appendChild(document.createTextNode(' Administrador principal'));
+                    fila.append(nombre, rol, permiso);
+                    tabla.appendChild(fila);
+                }
+                if (!data?.length) mensaje.textContent = 'No se encontraron usuarios.';
+                else mensaje.textContent = 'Selecciona las personas autorizadas para guardar alianzas.';
+            } catch (err) {
+                mensaje.textContent = 'No fue posible consultar los permisos: ' + err.message;
+            }
+        }
+
+        async function guardarAlianzas() {
+            const boton = document.getElementById('btnGuardarAlianzas');
+            if (!puedeGuardarAlianzas || !usuarioAlianzas) return;
+            const clave = obtenerClaveZonaActual();
+            const { tipo_eleccion, demarcacion } = claveAlianzasBD();
+            const configuracion = limpiarConfiguracion(obtenerEstadoAlianzas());
+            boton.disabled = true;
+            try {
+                const { error } = await cliente.from('configuraciones_alianzas').upsert({
+                    tipo_eleccion, demarcacion, configuracion,
+                    actualizado_por: usuarioAlianzas.id,
+                    fecha_actualizacion: new Date().toISOString()
+                }, { onConflict: 'tipo_eleccion,demarcacion' });
+                if (error) throw error;
+                alianzasGuardadas.set(clave, { ...configuracion });
+                alianzasCargadasDesdeBD.add(clave);
+                estadoAlianzasMensaje('✓ Alianzas guardadas en Supabase para esta elección y demarcación.');
+            } catch (err) {
+                console.error('Error al guardar alianzas:', err);
+                estadoAlianzasMensaje('No se guardaron las alianzas: ' + err.message, true);
+            } finally {
+                boton.disabled = false;
+            }
+        }
+
 
         function obtenerClaveZonaActual() {
             const eleccion = document.getElementById('filtroEleccion').value;
@@ -185,8 +456,7 @@
 
         // 4. LÓGICA DE FILTROS DINÁMICOS
         function cambioDeZona() {
-            inicializarPanelAlianzas();
-            actualizarDashboard();
+            cargarAlianzasZona();
         }
 
         function cambioDeEleccion() {
@@ -239,15 +509,58 @@
                 }
             }
             
-            inicializarPanelAlianzas();
-            actualizarDashboard();
+            cargarAlianzasZona();
         }
 
         // 5. CONSULTA A LA BASE DE DATOS
+        // Recupera todas las casillas: Supabase suele limitar cada respuesta a 1000 filas.
+        async function cargarCatalogoCasillas() {
+            const lote = 500;
+            const todas = [];
+            for (let inicio = 0; ; inicio += lote) {
+                const { data, error } = await cliente.from('casillas')
+                    .select('id_casilla,distrito_federal,distrito_local,municipio,comunidad')
+                    .order('id_casilla', { ascending: true })
+                    .range(inicio, inicio + lote - 1);
+                if (error) throw error;
+                todas.push(...(data || []));
+                if (!data || data.length < lote) break;
+            }
+            const unicas = new Map();
+            todas.forEach(c => { if (c.id_casilla != null) unicas.set(String(c.id_casilla), c); });
+            catalogoCasillas = [...unicas.values()];
+            catalogoCasillasListo = true;
+            if (catalogoCasillas.length !== TOTAL_CASILLAS_ESTATAL) {
+                console.warn(`Catálogo: ${catalogoCasillas.length} casillas; referencia estatal: ${TOTAL_CASILLAS_ESTATAL}.`);
+            }
+        }
+
+        function totalCasillasDemarcacion(eleccion, geo) {
+            if (!catalogoCasillasListo) return null;
+            if (eleccion === 'Gobernador') return catalogoCasillas.length;
+            if (!geo) return null;
+            const normalizar = valor => String(valor ?? '').trim().normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-MX');
+            return catalogoCasillas.filter(c => {
+                if (eleccion === 'Diputaciones Federales') return String(c.distrito_federal) === String(geo);
+                if (eleccion === 'Diputaciones Locales') return String(c.distrito_local) === String(geo);
+                if (eleccion === 'Ayuntamientos') return normalizar(c.municipio) === normalizar(geo);
+                if (eleccion === 'Presidencia de Comunidad') {
+                    // Se compara el par municipio + comunidad, no solo el nombre de comunidad.
+                    return normalizar(`${c.municipio} - ${c.comunidad || 'Sin comunidad asignada'}`) === normalizar(geo);
+                }
+                return false;
+            }).length;
+        }
+
         async function cargarDatos() {
             const { data, error } = await cliente.from('vista_resultados_totales').select('*');
-            if (error) return alert("Error al cargar resultados.");
+            if (error) return alert('Error al cargar resultados.');
             datosGlobales = data || [];
+            if (!catalogoCasillasListo) {
+                try { await cargarCatalogoCasillas(); }
+                catch (err) { console.error('Error al consultar casillas:', err); }
+            }
             actualizarDashboard();
         }
 
@@ -289,6 +602,10 @@
             // Actualizamos Contadores (KPIs)
             document.getElementById('kpiActas').innerText = dataAcumulada.actas_computadas.toLocaleString();
             document.getElementById('kpiVotos').innerText = dataAcumulada.gran_total_votos.toLocaleString();
+            const totalDemarcacion = totalCasillasDemarcacion(eleccion, geo);
+            document.getElementById('kpiFaltantes').innerText = totalDemarcacion === null
+                ? '—'
+                : Math.max(0, totalDemarcacion - dataAcumulada.actas_computadas).toLocaleString('es-MX');
 
             // C) Lógica de Alianzas para la gráfica
             let etiquetas = []; let valores = []; let colores = [];
@@ -388,6 +705,7 @@
                 ? geoSelect.options[geoSelect.selectedIndex].text : 'Todo el estado';
             const actas = document.getElementById('kpiActas').textContent.trim();
             const votos = document.getElementById('kpiVotos').textContent.trim();
+            const faltantes = document.getElementById('kpiFaltantes').textContent.trim();
             const canvas = document.getElementById('graficaVotos');
             if (!canvas || !miGrafica) throw new Error('La gráfica aún no está disponible.');
 
@@ -417,17 +735,20 @@
             pdf.setFontSize(9);
             pdf.setFont('helvetica', 'normal');
             pdf.text('DEMARCACIÓN', margen + 5, 43);
-            pdf.text('ACTAS COMPUTADAS', margen + 111, 43);
-            pdf.text('TOTAL DE VOTOS', margen + 186, 43);
+            pdf.text('ACTAS COMPUTADAS', margen + 106, 43);
+            pdf.text('ACTAS FALTANTES', margen + 163, 43);
+            pdf.text('TOTAL DE VOTOS', margen + 216, 43);
             pdf.setFont('helvetica', 'bold');
             pdf.setFontSize(12);
             pdf.setTextColor(31, 41, 55);
             const zona = pdf.splitTextToSize(demarcacion, 98);
             pdf.text(zona.slice(0, 2), margen + 5, 50);
             pdf.setTextColor(185, 28, 28);
-            pdf.text(actas, margen + 111, 52);
+            pdf.text(actas, margen + 106, 52);
+            pdf.setTextColor(180, 83, 9);
+            pdf.text(faltantes, margen + 163, 52);
             pdf.setTextColor(29, 78, 216);
-            pdf.text(votos, margen + 186, 52);
+            pdf.text(votos, margen + 216, 52);
 
             pdf.setTextColor(55, 65, 81);
             pdf.setFontSize(11);
@@ -470,7 +791,8 @@
         // 9. ARRANQUE PRINCIPAL
         window.addEventListener('DOMContentLoaded', async () => {
             await cargarDatos();
-            cambioDeEleccion(); // Esto carga los filtros geográficos y las alianzas en base al primer dropdown
+            cambioDeEleccion(); // Carga los filtros y consulta alianzas guardadas
+            await verificarPermisoAlianzas();
             iniciarSuscripcionRealtime();
         });
     </script>
