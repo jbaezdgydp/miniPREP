@@ -6,7 +6,6 @@
     <title>PREP Interno - Captura</title>
     <!-- Ícono para la pestaña del navegador -->
 <link rel="icon" type="image/png" href="icono-miniprep.png">
-<link rel="manifest" href="manifest.json">
 <!-- Ícono para cuando se guarda en la pantalla de inicio del celular (iOS/Android) -->
 <link rel="apple-touch-icon" href="icono-miniprep.png">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -162,13 +161,32 @@
         // INICIALIZAR SUPABASE
         const supabaseUrl = 'https://rllgivghmdvblycawraf.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsbGdpdmdobWR2Ymx5Y2F3cmFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNDI0NTEsImV4cCI6MjEwODcxODQ1MX0.DYr6vGxBaJUSiEYKlUsz4B3J1UNZ4STRyfg7Mz4-MC4';
-        const cliente = window.supabase.createClient(supabaseUrl, supabaseKey);
+        // Sesión exclusiva de Captura, independiente del Centro de Mando.
+        const cliente = window.supabase.createClient(supabaseUrl, supabaseKey, {
+            auth: { storageKey: 'miniprep-captura-auth', persistSession: true,
+                    autoRefreshToken: true, detectSessionInUrl: false }
+        });
 
 let actaDuplicadaBloqueo = false;
 let currentUser = null;
 let idCasillaAsignada = null;
 let catalogoCasillas = []; // Guardará las 1,720 casillas
 let nombreCapturista = ""; // Guardará el nombre del usuario
+
+// Comprobación contra Supabase Auth, no contra el nombre mostrado en pantalla.
+async function validarIdentidadCapturista() {
+    if (!currentUser?.id) {
+        throw new Error('No hay capturista identificado. Cierra sesión y vuelve a ingresar.');
+    }
+    const { data, error } = await cliente.auth.getUser();
+    if (error || !data?.user?.id) {
+        throw new Error('La sesión de captura expiró. Cierra sesión y vuelve a ingresar.');
+    }
+    if (data.user.id !== currentUser.id) {
+        throw new Error('La sesión autenticada no corresponde al capturista mostrado. Cierra sesión y vuelve a ingresar antes de guardar.');
+    }
+    return data.user.id;
+}
 
 function showLoading(text) {
     document.getElementById('loadingText').innerText = text;
@@ -396,6 +414,14 @@ async function submitActa(e) {
             return;
         }
 
+        // Evita subir evidencias si la identidad ya no coincide.
+        try {
+            await validarIdentidadCapturista();
+        } catch (err) {
+            alert(err.message);
+            return;
+        }
+
         showLoading("Subiendo foto del acta...");
 
         try {
@@ -416,6 +442,8 @@ async function submitActa(e) {
             
             const fotoUrl = publicUrlData.publicUrl;
 
+            // Volver a comprobar después de la subida: la sesión pudo cambiar.
+            const idCapturistaVerificado = await validarIdentidadCapturista();
             showLoading("Guardando resultados...");
 
             const { data: insertData, error: insertError } = await cliente
@@ -423,7 +451,7 @@ async function submitActa(e) {
                 .insert([
                     {
                         id_casilla: idCasillaAsignada,
-                        id_usuario: currentUser.id,
+                        id_usuario: idCapturistaVerificado,
                         tipo_eleccion: tipoEleccionSeleccionada,
                         votos_pan: parseInt(document.getElementById('v_pan').value) || 0,
                         votos_pri: parseInt(document.getElementById('v_pri').value) || 0,
