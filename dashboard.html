@@ -6,6 +6,7 @@
     <title>Centro de Mando - PREP Tlaxcala</title>
     <link rel="manifest" href="manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -23,7 +24,7 @@
         </button>
     </nav>
 
-    <main class="max-w-7xl mx-auto px-4 py-8">
+    <main id="areaImpresion" class="w-[1050px] mx-auto px-4 py-4 bg-gray-100">
         
         <!-- CONTROLES Y KPIs -->
         <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -46,7 +47,15 @@
                     <!-- Se llena automáticamente con JavaScript -->
                 </select>
             </div>
-
+            <!-- Agrega este botón junto a los contadores de Actas y Votos -->
+            <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-gray-500 font-bold uppercase block">Reporte Oficial</span>
+                    <button onclick="exportarPDF()" class="bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold py-2 px-3 rounded shadow transition flex items-center mt-1">
+                        <i class="fas fa-file-pdf mr-1"></i> Descargar PDF
+                    </button>
+                </div>
+            </div>
             <div class="text-right pl-4 border-l">
                 <p class="text-sm text-gray-500 font-bold uppercase">Actas Computadas</p>
                 <p id="kpiActas" class="text-3xl font-black text-red-700">0</p>
@@ -364,6 +373,99 @@
                 })
                 .subscribe();
         }
+
+    // Exportación directa a PDF: carta horizontal, una página, sin captura HTML.
+    function exportarPDF() {
+        try {
+            const jsPDF = window.jspdf && window.jspdf.jsPDF;
+            if (!jsPDF) throw new Error('No se cargó la biblioteca de PDF.');
+
+            const eleccion = document.getElementById('filtroEleccion').value;
+            const geoSelect = document.getElementById('filtroGeo');
+            const geoContenedor = document.getElementById('contenedorFiltroGeo');
+            const mostrarGeo = geoContenedor && !geoContenedor.classList.contains('hidden');
+            const demarcacion = mostrarGeo && geoSelect && geoSelect.selectedIndex >= 0
+                ? geoSelect.options[geoSelect.selectedIndex].text : 'Todo el estado';
+            const actas = document.getElementById('kpiActas').textContent.trim();
+            const votos = document.getElementById('kpiVotos').textContent.trim();
+            const canvas = document.getElementById('graficaVotos');
+            if (!canvas || !miGrafica) throw new Error('La gráfica aún no está disponible.');
+
+            // Se utilizan unidades en milímetros para respetar el tamaño real de carta.
+            const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter', compress: true });
+            const ancho = pdf.internal.pageSize.getWidth();  // 279.4 mm
+            const alto = pdf.internal.pageSize.getHeight();   // 215.9 mm
+            const margen = 11;
+            const util = ancho - 2 * margen;
+
+            // Encabezado vectorial, siempre dentro de los márgenes.
+            pdf.setFillColor(91, 33, 182);
+            pdf.roundedRect(margen, 10, util, 22, 2, 2, 'F');
+            pdf.setTextColor(255, 255, 255);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(15);
+            pdf.text('PREP INTERNO - CENTRO DE MANDO', margen + 6, 19);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(10);
+            pdf.text(eleccion, margen + 6, 26);
+
+            // Datos reales de la pantalla (sin cifras fijas ni selectores ambiguos).
+            pdf.setFillColor(248, 250, 252);
+            pdf.setDrawColor(226, 232, 240);
+            pdf.roundedRect(margen, 36, util, 25, 2, 2, 'FD');
+            pdf.setTextColor(75, 85, 99);
+            pdf.setFontSize(9);
+            pdf.setFont('helvetica', 'normal');
+            pdf.text('DEMARCACIÓN', margen + 5, 43);
+            pdf.text('ACTAS COMPUTADAS', margen + 111, 43);
+            pdf.text('TOTAL DE VOTOS', margen + 186, 43);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(12);
+            pdf.setTextColor(31, 41, 55);
+            const zona = pdf.splitTextToSize(demarcacion, 98);
+            pdf.text(zona.slice(0, 2), margen + 5, 50);
+            pdf.setTextColor(185, 28, 28);
+            pdf.text(actas, margen + 111, 52);
+            pdf.setTextColor(29, 78, 216);
+            pdf.text(votos, margen + 186, 52);
+
+            pdf.setTextColor(55, 65, 81);
+            pdf.setFontSize(11);
+            pdf.setFont('helvetica', 'bold');
+            pdf.text('TENDENCIA DE VOTACIÓN', margen + 2, 69);
+
+            // La gráfica completa se ajusta proporcionalmente a un recuadro fijo.
+            // No se clona el HTML, evitando recortes por overflow y anchos en píxeles.
+            const cajaX = margen;
+            const cajaY = 73;
+            const cajaW = util;
+            const cajaH = alto - cajaY - 15;
+            pdf.setDrawColor(226, 232, 240);
+            pdf.setFillColor(255, 255, 255);
+            pdf.roundedRect(cajaX, cajaY, cajaW, cajaH, 2, 2, 'FD');
+
+            const imagen = canvas.toDataURL('image/png', 1);
+            const maxW = cajaW - 10;
+            const maxH = cajaH - 10;
+            const proporcion = Math.min(maxW / canvas.width, maxH / canvas.height);
+            const imgW = canvas.width * proporcion;
+            const imgH = canvas.height * proporcion;
+            pdf.addImage(imagen, 'PNG', cajaX + (cajaW - imgW) / 2,
+                cajaY + (cajaH - imgH) / 2, imgW, imgH);
+
+            pdf.setTextColor(107, 114, 128);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(8);
+            pdf.text('Generado: ' + new Date().toLocaleString('es-MX'), margen, alto - 6);
+            pdf.text('Página 1 de 1', ancho - margen, alto - 6, { align: 'right' });
+
+            const nombre = eleccion.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]+/g, '_');
+            pdf.save(`Reporte_PREP_${nombre}.pdf`);
+        } catch (error) {
+            console.error('Error al generar PDF:', error);
+            alert('No fue posible generar el PDF: ' + error.message);
+        }
+    }
 
         // 9. ARRANQUE PRINCIPAL
         window.addEventListener('DOMContentLoaded', async () => {
