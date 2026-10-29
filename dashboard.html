@@ -47,6 +47,21 @@
                     <!-- Se llena automáticamente con JavaScript -->
                 </select>
             </div>
+            <div id="filtrosComunidad" class="hidden w-full grid grid-cols-1 md:grid-cols-4 gap-3 border-t pt-3">
+                <label class="text-xs font-bold text-indigo-700">MUNICIPIO
+                    <select id="filtroMunicipioCom" onchange="cambiarMunicipioCom()" class="block w-full mt-1 border rounded p-2 text-sm"></select>
+                </label>
+                <label class="text-xs font-bold text-indigo-700">COMUNIDAD
+                    <select id="filtroComunidadCom" onchange="cambiarComunidadCom()" class="block w-full mt-1 border rounded p-2 text-sm"></select>
+                </label>
+                <label class="text-xs font-bold text-indigo-700">SECCIÓN
+                    <select id="filtroSeccionCom" onchange="cambiarSeccionCom()" class="block w-full mt-1 border rounded p-2 text-sm"></select>
+                </label>
+                <label class="text-xs font-bold text-indigo-700">CASILLA
+                    <select id="filtroCasillaCom" onchange="cambiarCasillaCom()" class="block w-full mt-1 border rounded p-2 text-sm"></select>
+                </label>
+                <p id="avisoDetalleCom" class="md:col-span-4 text-xs text-amber-700 hidden"></p>
+            </div>
             <!-- Agrega este botón junto a los contadores de Actas y Votos -->
             <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center justify-between">
                 <div>
@@ -137,7 +152,11 @@
         // 1. CONFIGURACIÓN SUPABASE
         const supabaseUrl = 'https://rllgivghmdvblycawraf.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsbGdpdmdobWR2Ymx5Y2F3cmFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNDI0NTEsImV4cCI6MjEwODcxODQ1MX0.DYr6vGxBaJUSiEYKlUsz4B3J1UNZ4STRyfg7Mz4-MC4';
-        const cliente = window.supabase.createClient(supabaseUrl, supabaseKey);
+        // Sesión exclusiva del Centro de Mando: no comparte credenciales con Captura.
+        const cliente = window.supabase.createClient(supabaseUrl, supabaseKey, {
+            auth: { storageKey: 'miniprep-dashboard-alianzas-auth', persistSession: true,
+                    autoRefreshToken: true, detectSessionInUrl: false }
+        });
 
         const TOTAL_CASILLAS_ESTATAL = 1720;
         let catalogoCasillas = [];
@@ -454,61 +473,137 @@
             }
         }
 
-        // 4. LÓGICA DE FILTROS DINÁMICOS
-        function cambioDeZona() {
+        // 4. FILTROS GEOGRÁFICOS EN CASCADA
+        const nCom = v => String(v ?? '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-MX');
+        const comunidadNombre = c => c.comunidad || 'Sin comunidad asignada';
+        const seleccion = id => document.getElementById(id).value;
+        function llenarSelect(id, valores, etiqueta, todo = false) {
+            const el = document.getElementById(id);
+            el.replaceChildren();
+            const opciones = [...new Set(valores.map(v => String(v)).filter(Boolean))]
+                .sort((a,b) => a.localeCompare(b, 'es-MX', { numeric:true }));
+            if (todo) opciones.unshift('');
+            if (!opciones.length) opciones.push('');
+            opciones.forEach(v => { const o = new Option(v || etiqueta, v); el.add(o); });
+            el.disabled = !valores.length;
+        }
+        function filasComunidad() {
+            return datosGlobales.filter(d => d.tipo_eleccion === 'Presidencia de Comunidad');
+        }
+        function casillasComunidad() {
+            const mun = seleccion('filtroMunicipioCom'), com = seleccion('filtroComunidadCom');
+            return catalogoCasillas.filter(c => nCom(c.municipio) === nCom(mun) && nCom(comunidadNombre(c)) === nCom(com));
+        }
+        let resultadosComunidadPorCasilla = [];
+        let detalleActasListo = false;
+        let errorDetalleActas = '';
+        const camposVotosActa = {
+            total_pan:'votos_pan', total_pri:'votos_pri', total_prdt:'votos_prdt',
+            total_pt:'votos_pt', total_pvem:'votos_pvem', total_mc:'votos_mc',
+            total_morena:'votos_morena', total_pac:'votos_pac', total_rsp:'votos_rsp',
+            total_fxm:'votos_fxm', total_somos:'votos_somos_mexico', total_paz:'votos_paz',
+            total_panal:'votos_nueva_alianza', total_ind:'votos_independiente',
+            total_nulos:'votos_nulos'
+        };
+        function detalleDisponible() { return detalleActasListo; }
+        function actasComunidad() {
+            const ids = new Set(casillasComunidad().map(c => String(c.id_casilla)));
+            return resultadosComunidadPorCasilla.filter(r => ids.has(String(r.id_casilla)));
+        }
+        function casillasCapturadasComunidad() {
+            return new Set(actasComunidad().map(r => String(r.id_casilla)));
+        }
+        async function cargarResultadosPorCasilla() {
+            detalleActasListo = false;
+            errorDetalleActas = '';
+            const todas = [];
+            try {
+                for (let desde=0; ; desde+=500) {
+                    const {data,error} = await cliente.from('resultados_actas')
+                        .select('id_resultado,id_casilla,tipo_eleccion,total_votos_sistema,total_votos_acta,' +
+                            Object.values(camposVotosActa).join(','))
+                        .eq('tipo_eleccion','Presidencia de Comunidad')
+                        .order('id_resultado',{ascending:true})
+                        .range(desde,desde+499);
+                    if (error) throw error;
+                    todas.push(...(data||[]));
+                    if (!data || data.length<500) break;
+                }
+                const vistos = new Set();
+                for (const r of todas) {
+                    if (vistos.has(String(r.id_casilla))) throw new Error('Hay más de un resultado para la misma casilla y elección. Es necesario revisar duplicados antes de sumar votos.');
+                    vistos.add(String(r.id_casilla));
+                }
+                resultadosComunidadPorCasilla = todas;
+                detalleActasListo = true;
+            } catch(e) {
+                resultadosComunidadPorCasilla = [];
+                errorDetalleActas = e.message;
+                console.error('No fue posible cargar resultados individuales:',e);
+            }
+        }
+        function refrescarDetalleCom() {
+            const aviso = document.getElementById('avisoDetalleCom');
+            const capturadas = casillasCapturadasComunidad();
+            const cs = casillasComunidad().filter(c => capturadas.has(String(c.id_casilla)));
+            const sec = document.getElementById('filtroSeccionCom');
+            const cas = document.getElementById('filtroCasillaCom');
+            sec.disabled = !detalleDisponible() || !cs.length;
+            cas.disabled = !detalleDisponible() || !cs.length;
+            aviso.classList.toggle('hidden', detalleDisponible());
+            aviso.textContent = detalleDisponible() ? '' :
+                'No se puede consultar el desglose por casilla: ' + (errorDetalleActas || 'cargando datos individuales.');
+        }
+        function cambiarMunicipioCom() {
+            const mun = seleccion('filtroMunicipioCom');
+            const comunidades = filasComunidad().filter(r => nCom(r.municipio) === nCom(mun)).map(comunidadNombre);
+            llenarSelect('filtroComunidadCom', comunidades, 'Sin comunidades');
+            cambiarComunidadCom();
+        }
+        function cambiarComunidadCom() {
+            const capturadas = casillasCapturadasComunidad();
+            const cs = casillasComunidad().filter(c => capturadas.has(String(c.id_casilla)));
+            llenarSelect('filtroSeccionCom', cs.map(c => c.seccion).filter(v => v != null && String(v).trim()), 'Todas las secciones', true);
+            cambiarSeccionCom();
+            const mun = seleccion('filtroMunicipioCom'), com = seleccion('filtroComunidadCom');
+            const geo = document.getElementById('filtroGeo');
+            geo.replaceChildren(new Option(`${mun} - ${com}`, `${mun} - ${com}`));
             cargarAlianzasZona();
         }
-
+        function cambiarSeccionCom() {
+            const sec = seleccion('filtroSeccionCom');
+            const capturadas = casillasCapturadasComunidad();
+            const cs = casillasComunidad().filter(c => capturadas.has(String(c.id_casilla)) && (!sec || String(c.seccion) === sec));
+            llenarSelect('filtroCasillaCom', cs.map(c => c.id_casilla).filter(v => v != null), 'Todas las casillas', true);
+            refrescarDetalleCom();
+            actualizarDashboard();
+        }
+        function cambiarCasillaCom() { actualizarDashboard(); }
+        function cambioDeZona() { cargarAlianzasZona(); }
         function cambioDeEleccion() {
-            const eleccion = document.getElementById('filtroEleccion').value;
+            const eleccion = seleccion('filtroEleccion');
             const contenedor = document.getElementById('contenedorFiltroGeo');
+            const cascada = document.getElementById('filtrosComunidad');
             const label = document.getElementById('labelFiltroGeo');
             const select = document.getElementById('filtroGeo');
-            
-            select.innerHTML = '';
-            
-            if (eleccion === 'Gobernador') {
-                contenedor.classList.add('hidden');
-            } else {
-                contenedor.classList.remove('hidden');
-                let valoresUnicos = new Set();
-                
-                datosGlobales.filter(d => d.tipo_eleccion === eleccion).forEach(d => {
-                    if (eleccion === 'Diputaciones Federales' && d.distrito_federal) {
-                        label.innerText = 'Distrito Federal';
-                        valoresUnicos.add(d.distrito_federal);
-                    }
-                    if (eleccion === 'Diputaciones Locales' && d.distrito_local) {
-                        label.innerText = 'Distrito Local';
-                        valoresUnicos.add(d.distrito_local);
-                    }
-                    if (eleccion === 'Ayuntamientos' && d.municipio) {
-                        label.innerText = 'Municipio';
-                        valoresUnicos.add(d.municipio);
-                    }
-                    if (eleccion === 'Presidencia de Comunidad' && d.municipio) {
-                        label.innerText = 'Municipio - Comunidad';
-                        const nombreComunidad = d.comunidad || 'Sin comunidad asignada';
-                        valoresUnicos.add(`${d.municipio} - ${nombreComunidad}`);
-                    }
-                });
-                
-                const arrayOrdenado = [...valoresUnicos].sort((a, b) => {
-                    const numA = parseInt(a); const numB = parseInt(b);
-                    if(!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                    return String(a).localeCompare(String(b));
-                });
-
-                if (arrayOrdenado.length === 0) {
-                    select.innerHTML = '<option value="">Sin actas registradas aún</option>';
-                } else {
-                    arrayOrdenado.forEach(val => {
-                        const textoOpcion = eleccion.includes('Diputaciones') ? `Distrito ${val}` : val;
-                        select.innerHTML += `<option value="${val}">${textoOpcion}</option>`;
-                    });
-                }
+            cascada.classList.toggle('hidden', eleccion !== 'Presidencia de Comunidad');
+            contenedor.classList.toggle('hidden', eleccion === 'Gobernador' || eleccion === 'Presidencia de Comunidad');
+            select.replaceChildren();
+            if (eleccion === 'Presidencia de Comunidad') {
+                llenarSelect('filtroMunicipioCom', filasComunidad().map(r => r.municipio), 'Sin municipios');
+                cambiarMunicipioCom();
+                return;
             }
-            
+            if (eleccion !== 'Gobernador') {
+                const campo = eleccion === 'Diputaciones Federales' ? 'distrito_federal' :
+                    eleccion === 'Diputaciones Locales' ? 'distrito_local' : 'municipio';
+                label.innerText = eleccion === 'Ayuntamientos' ? 'Municipio' :
+                    eleccion === 'Diputaciones Federales' ? 'Distrito Federal' : 'Distrito Local';
+                const vals = [...new Set(datosGlobales.filter(r => r.tipo_eleccion === eleccion)
+                    .map(r => r[campo]).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b),'es-MX',{numeric:true}));
+                vals.forEach(v => select.add(new Option(eleccion.includes('Diputaciones') ? `Distrito ${v}` : String(v), String(v))));
+                if (!vals.length) select.add(new Option('Sin actas registradas aún',''));
+            }
             cargarAlianzasZona();
         }
 
@@ -519,7 +614,7 @@
             const todas = [];
             for (let inicio = 0; ; inicio += lote) {
                 const { data, error } = await cliente.from('casillas')
-                    .select('id_casilla,distrito_federal,distrito_local,municipio,comunidad')
+                    .select('id_casilla,distrito_federal,distrito_local,municipio,comunidad,seccion,tipo_casilla')
                     .order('id_casilla', { ascending: true })
                     .range(inicio, inicio + lote - 1);
                 if (error) throw error;
@@ -561,7 +656,12 @@
                 try { await cargarCatalogoCasillas(); }
                 catch (err) { console.error('Error al consultar casillas:', err); }
             }
-            actualizarDashboard();
+            await cargarResultadosPorCasilla();
+            if (seleccion('filtroEleccion') === 'Presidencia de Comunidad') {
+                cambiarComunidadCom();
+            } else {
+                actualizarDashboard();
+            }
         }
 
         // 6. DIBUJAR / ACTUALIZAR EL DASHBOARD (CON SUMATORIA GEOGRÁFICA)
@@ -587,6 +687,23 @@
                 }
             }
 
+            if (eleccion === 'Presidencia de Comunidad' && detalleDisponible()) {
+                const sec = seleccion('filtroSeccionCom');
+                const cas = seleccion('filtroCasillaCom');
+                if (sec || cas) {
+                    const ids = new Set(casillasComunidad().filter(c =>
+                        (!sec || String(c.seccion) === sec) && (!cas || String(c.id_casilla) === cas)
+                    ).map(c => String(c.id_casilla)));
+                    const actas = actasComunidad().filter(r => ids.has(String(r.id_casilla)));
+                    datosFiltrados = actas.map(r => {
+                        const row = { actas_computadas:1,
+                            gran_total_votos:Number(r.total_votos_sistema ?? r.total_votos_acta ?? 0) };
+                        plantillaPartidos.forEach(p => row[p.key] = Number(r[camposVotosActa[p.key]] || 0));
+                        return row;
+                    });
+                }
+            }
+
             // B) Sumamos todas las filas que pasaron el filtro
             const dataAcumulada = { actas_computadas: 0, gran_total_votos: 0 };
             plantillaPartidos.forEach(p => dataAcumulada[p.key] = 0);
@@ -602,7 +719,12 @@
             // Actualizamos Contadores (KPIs)
             document.getElementById('kpiActas').innerText = dataAcumulada.actas_computadas.toLocaleString();
             document.getElementById('kpiVotos').innerText = dataAcumulada.gran_total_votos.toLocaleString();
-            const totalDemarcacion = totalCasillasDemarcacion(eleccion, geo);
+            let totalDemarcacion = totalCasillasDemarcacion(eleccion, geo);
+            if (eleccion === 'Presidencia de Comunidad' && detalleDisponible()) {
+                const sec = seleccion('filtroSeccionCom'), cas = seleccion('filtroCasillaCom');
+                if (sec || cas) totalDemarcacion = casillasComunidad().filter(c =>
+                    (!sec || String(c.seccion) === sec) && (!cas || String(c.id_casilla) === cas)).length;
+            }
             document.getElementById('kpiFaltantes').innerText = totalDemarcacion === null
                 ? '—'
                 : Math.max(0, totalDemarcacion - dataAcumulada.actas_computadas).toLocaleString('es-MX');
@@ -650,6 +772,31 @@
         }
 
         // 7. INICIALIZAR CHART.JS
+        // Etiquetas numéricas visibles sobre las barras (también en la exportación PDF).
+        const etiquetasVotosPlugin = {
+            id: 'etiquetasVotosMiniPREP',
+            afterDatasetsDraw(chart) {
+                const { ctx, chartArea } = chart;
+                ctx.save();
+                ctx.fillStyle = '#1f2937';
+                ctx.font = 'bold 12px Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                chart.data.datasets.forEach((dataset, datasetIndex) => {
+                    const meta = chart.getDatasetMeta(datasetIndex);
+                    if (meta.hidden) return;
+                    meta.data.forEach((barra, index) => {
+                        const valor = Number(dataset.data[index]);
+                        if (!Number.isFinite(valor)) return;
+                        const etiqueta = valor.toLocaleString('es-MX');
+                        const posicionY = Math.max(chartArea.top + 14, barra.y - 5);
+                        ctx.fillText(etiqueta, barra.x, posicionY);
+                    });
+                });
+                ctx.restore();
+            }
+        };
+
         function renderizarGrafica(etiquetas, valores, colores) {
             const ctx = document.getElementById('graficaVotos').getContext('2d');
             if (miGrafica) miGrafica.destroy();
@@ -661,11 +808,13 @@
                         label: 'Votos', data: valores, backgroundColor: colores, borderRadius: 4
                     }]
                 },
+                plugins: [etiquetasVotosPlugin],
                 options: {
                     responsive: true, maintainAspectRatio: false,
+                    layout: { padding: { top: 20 } },
                     plugins: { legend: { display: false } },
                     scales: {
-                        y: { beginAtZero: true, grid: { color: '#f3f4f6' } },
+                        y: { beginAtZero: true, grace: '12%', grid: { color: '#f3f4f6' } },
                         x: { grid: { display: false }, ticks: { font: { weight: 'bold' } } }
                     }
                 }
@@ -701,8 +850,14 @@
             const geoSelect = document.getElementById('filtroGeo');
             const geoContenedor = document.getElementById('contenedorFiltroGeo');
             const mostrarGeo = geoContenedor && !geoContenedor.classList.contains('hidden');
-            const demarcacion = mostrarGeo && geoSelect && geoSelect.selectedIndex >= 0
+            let demarcacion = mostrarGeo && geoSelect && geoSelect.selectedIndex >= 0
                 ? geoSelect.options[geoSelect.selectedIndex].text : 'Todo el estado';
+            if (eleccion === 'Presidencia de Comunidad') {
+                demarcacion = seleccion('filtroMunicipioCom') + ' - ' + seleccion('filtroComunidadCom');
+                const sec = seleccion('filtroSeccionCom'), cas = seleccion('filtroCasillaCom');
+                if (sec) demarcacion += ' / Sección ' + sec;
+                if (cas) demarcacion += ' / ' + cas;
+            }
             const actas = document.getElementById('kpiActas').textContent.trim();
             const votos = document.getElementById('kpiVotos').textContent.trim();
             const faltantes = document.getElementById('kpiFaltantes').textContent.trim();
