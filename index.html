@@ -3,476 +3,467 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Centro de Mando - PREP Tlaxcala</title>
-    <link rel="manifest" href="manifest.json">
+    <title>PREP Interno - Captura</title>
+    <!-- Ícono para la pestaña del navegador -->
+<link rel="icon" type="image/png" href="icono-miniprep.png">
+<link rel="manifest" href="manifest.json">
+<!-- Ícono para cuando se guarda en la pantalla de inicio del celular (iOS/Android) -->
+<link rel="apple-touch-icon" href="icono-miniprep.png">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Librería oficial de Supabase -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-100 font-sans antialiased text-gray-800">
 
-    <!-- HEADER -->
-    <nav class="bg-purple-800 text-white shadow-md p-4 sticky top-0 z-40 flex justify-between items-center">
-        <div class="flex items-center">
-            <i class="fas fa-chart-line text-2xl mr-3"></i>
-            <h1 class="text-xl font-bold uppercase">PREP Interno - Centro de Mando</h1>
+    <!-- OVERLAY DE CARGA -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-purple-900 bg-opacity-70 z-50 hidden flex items-center justify-center">
+        <div class="bg-white p-5 rounded-lg shadow-xl flex items-center space-x-4">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600"></div>
+            <span id="loadingText" class="text-gray-800 font-semibold text-lg">Cargando...</span>
         </div>
-        <button onclick="cargarDatos()" class="bg-red-600 hover:bg-red-500 px-4 py-2 rounded-lg font-bold shadow transition flex items-center">
-            <i class="fas fa-sync-alt mr-2"></i> Actualizar Datos
-        </button>
-    </nav>
+    </div>
 
-    <main id="areaImpresion" class="w-[1050px] mx-auto px-4 py-4 bg-gray-100">
-        
-        <!-- CONTROLES Y KPIs -->
-        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6 flex flex-wrap items-center justify-between gap-4">
-            
-            <div class="flex-1 min-w-[200px]">
-                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Visualizar Elección</label>
-                <select id="filtroEleccion" onchange="cambioDeEleccion()" class="w-full border border-gray-300 rounded-md px-3 py-2 text-lg font-bold focus:outline-none focus:border-red-500 bg-gray-50">
-                    <option value="Gobernador">Gobernador (Estatal)</option>
-                    <option value="Diputaciones Federales">Diputaciones Federales</option>
-                    <option value="Diputaciones Locales">Diputaciones Locales</option>
-                    <option value="Ayuntamientos">Ayuntamientos (Presidencias Municipales)</option>
-                    <option value="Presidencia de Comunidad">Presidencia de Comunidad</option>
-                </select>
-            </div>
-            
-            <!-- NUEVO FILTRO GEOGRÁFICO DINÁMICO -->
-            <div id="contenedorFiltroGeo" class="flex-1 min-w-[200px] hidden">
-                <label id="labelFiltroGeo" class="block text-xs font-bold text-indigo-500 uppercase mb-1">Selecciona Demarcación</label>
-                <select id="filtroGeo" onchange="cambioDeZona()" class="w-full border border-indigo-300 rounded-md px-3 py-2 text-lg font-bold text-indigo-900 focus:outline-none focus:border-indigo-500 bg-indigo-50 shadow-inner">
-                    <!-- Se llena automáticamente con JavaScript -->
-                </select>
-            </div>
-            <!-- Agrega este botón junto a los contadores de Actas y Votos -->
-            <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex items-center justify-between">
+    <!-- PANTALLA DE LOGIN -->
+    <div id="loginView" class="min-h-screen bg-purple-900 flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-sm text-center">
+            <i class="fas fa-vote-yea text-5xl text-purple-700 mb-4"></i>
+            <h2 class="text-2xl font-bold text-gray-800 mb-6">mini PREP</h2>
+            <form onsubmit="handleLogin(event)" class="space-y-4 text-left">
                 <div>
-                    <span class="text-xs text-gray-500 font-bold uppercase block">Reporte Oficial</span>
-                    <button onclick="exportarPDF()" class="bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold py-2 px-3 rounded shadow transition flex items-center mt-1">
-                        <i class="fas fa-file-pdf mr-1"></i> Descargar PDF
-                    </button>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Correo Electrónico</label>
+                    <input type="email" id="loginEmail" required class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none" placeholder="tu@correo.com">
                 </div>
-            </div>
-            <div class="text-right pl-4 border-l">
-                <p class="text-sm text-gray-500 font-bold uppercase">Actas Computadas</p>
-                <p id="kpiActas" class="text-3xl font-black text-red-700">0</p>
-            </div>
-            <div class="text-right border-l pl-4">
-                <p class="text-sm text-gray-500 font-bold uppercase">Total de Votos</p>
-                <p id="kpiVotos" class="text-3xl font-black text-blue-700">0</p>
-            </div>
-        </div>
-
-        <!-- SIMULADOR DE ALIANZAS -->
-        <div class="bg-white p-4 rounded-lg shadow-sm border border-indigo-200 mb-6 bg-indigo-50/30">
-            <div class="flex justify-between items-center mb-3 cursor-pointer" onclick="toggleAlianzas()">
-                <h3 class="font-bold text-indigo-900 uppercase text-sm"><i class="fas fa-object-group mr-2"></i>Configurador de Alianzas 2027</h3>
-                <i id="iconoAlianzas" class="fas fa-chevron-down text-indigo-600"></i>
-            </div>
-            
-            <div id="panelAlianzas" class="hidden">
-                <p class="text-xs text-indigo-700 mb-4">Agrupa a los partidos para sumar sus votos automáticamente en la gráfica. Los votos nulos e independientes no se agrupan.</p>
-                <div id="gridAlianzas" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                    <!-- Los selectores se generan desde JavaScript -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+                    <input type="password" id="loginPassword" required class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none" placeholder="••••••••">
                 </div>
+                <button type="submit" class="w-full bg-purple-700 hover:bg-red-700 text-white font-bold py-3 rounded-lg transition mt-4">
+                    Ingresar
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- PANTALLA DE CAPTURA (OCULTA INICIALMENTE) -->
+    <div id="captureView" class="hidden min-h-screen pb-20">
+        <!-- Header -->
+        <div class="bg-purple-700 text-white p-4 shadow-md sticky top-0 z-40 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold">Captura de Acta</h1>
+                <p id="casillaAsignadaText" class="text-sm text-red-200">Casilla: Cargando...</p>
             </div>
+            <button onclick="logout()" class="text-red-100 hover:text-white"><i class="fas fa-sign-out-alt text-xl"></i></button>
         </div>
 
-        <!-- GRÁFICA PRINCIPAL -->
-        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-            <h2 class="text-lg font-bold text-gray-800 mb-4 uppercase border-b pb-2">Tendencia de Votación</h2>
-            <div class="relative h-[450px] w-full">
-                <canvas id="graficaVotos"></canvas>
+        <div class="p-4 max-w-md mx-auto">
+            <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded-r-lg">
+                <p class="text-sm text-blue-700 font-medium"><i class="fas fa-info-circle mr-1"></i> Captura los datos exactamente como aparecen en el Acta de Escrutinio y Cómputo.</p>
             </div>
-        </div>
 
-    </main>
+            <!-- BUSCADOR DINÁMICO DE CASILLAS -->
+                <div class="bg-blue-50 p-4 rounded-lg shadow-sm border border-blue-200 mb-6">
+                    <h3 class="font-bold text-blue-900 mb-3 text-sm uppercase"><i class="fas fa-map-marker-alt mr-1"></i>Casilla a Capturar</h3>
+                    
+                    <div class="grid grid-cols-1 gap-3 mb-3">
+                        <select id="sel_municipio" onchange="filtrarCasillas('municipio')" class="w-full border-2 border-blue-300 rounded-lg p-3 text-sm font-bold text-blue-800 bg-white focus:outline-none focus:border-blue-500">
+                            <option value="">Selecciona Municipio...</option>
+                        </select>
+                        
+                        <select id="sel_comunidad" onchange="filtrarCasillas('comunidad')" class="w-full border-2 border-blue-300 rounded-lg p-3 text-sm font-bold text-blue-800 bg-white focus:outline-none focus:border-blue-500" disabled>
+                            <option value="">Selecciona Localidad/Comunidad...</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <select id="sel_seccion" onchange="filtrarCasillas('seccion')" class="w-full border-2 border-blue-300 rounded-lg p-3 text-sm font-bold text-blue-800 bg-white focus:outline-none focus:border-blue-500" disabled>
+                            <option value="">Sección...</option>
+                        </select>
+                        
+                        <select id="sel_casilla" onchange="confirmarCasilla()" class="w-full border-2 border-green-500 rounded-lg p-3 text-sm font-black text-green-800 bg-green-50 focus:outline-none focus:border-green-600" disabled>
+                            <option value="">Casilla...</option>
+                        </select>
+                    </div>
+                </div>
+
+            <form id="actaForm" class="space-y-4" onsubmit="submitActa(event)">
+                
+                <!-- SELECTOR DE TIPO DE ELECCIÓN -->
+                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6">
+                    <label class="block text-sm font-bold text-gray-800 mb-2">2. ¿De qué elección es esta acta?</label>
+                    <select id="tipoEleccion" onchange="verificarDuplicado()" required class="w-full border-2 border-gray-300 rounded-lg p-3 text-lg font-bold text-gray-700 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-gray-50">
+                        <option value="">Selecciona una opción...</option>
+                        <option value="Gobernador">Gobernador</option>
+                        <option value="Diputaciones Federales">Diputaciones Federales</option>
+                        <option value="Diputaciones Locales">Diputaciones Locales</option>
+                        <option value="Ayuntamientos">Ayuntamientos (Presidencia Municipal)</option>
+                        <option value="Presidencia de Comunidad">Presidencia de Comunidad</option>
+                    </select>
+                </div>
+                    <!-- NUEVA ALERTA DE DUPLICADOS (Oculta por defecto) -->
+                <div id="alertaDuplicado" class="hidden bg-red-100 border-l-4 border-red-600 text-red-800 p-4 mb-6 rounded shadow-sm text-sm">
+                    <!-- El mensaje se inyecta desde JavaScript -->
+                </div>
+                <h3 class="font-bold text-gray-700 border-b pb-2 uppercase text-sm">Votos por Partido / Coalición</h3>
+                
+                <!-- GRID DE TODOS LOS PARTIDOS -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div><label class="block text-[11px] font-bold text-blue-800 uppercase">PAN</label><input type="number" id="v_pan" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-red-600 uppercase">PRI</label><input type="number" id="v_pri" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    
+                    <div><label class="block text-[11px] font-bold text-yellow-500 uppercase">PRD / PRDT</label><input type="number" id="v_prd" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-red-700 uppercase">PT</label><input type="number" id="v_pt" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    
+                    <div><label class="block text-[11px] font-bold text-green-600 uppercase">PVEM</label><input type="number" id="v_pvem" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-orange-500 uppercase">Movimiento Ciudadano</label><input type="number" id="v_mc" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    
+                    <div><label class="block text-[11px] font-bold text-red-900 uppercase">MORENA</label><input type="number" id="v_morena" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-purple-700 uppercase">PAC</label><input type="number" id="v_pac" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    
+                    <div><label class="block text-[11px] font-bold text-gray-700 uppercase">RSP</label><input type="number" id="v_rsp" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-pink-500 uppercase">Fuerza x México</label><input type="number" id="v_fxm" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    
+                    <div><label class="block text-[11px] font-bold text-blue-900 uppercase">Somos México</label><input type="number" id="v_somos" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-purple-900 uppercase">PAZ</label><input type="number" id="v_paz" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    
+                    <div><label class="block text-[11px] font-bold text-teal-500 uppercase">Nueva Alianza</label><input type="number" id="v_panal" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-gray-500 uppercase">Independiente</label><input type="number" id="v_ind" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 pt-4 border-t mt-4">
+                    <div><label class="block text-[11px] font-bold text-gray-500 uppercase">Candidatos No Reg.</label><input type="number" id="v_noreg" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                    <div><label class="block text-[11px] font-bold text-gray-800 uppercase">Votos Nulos</label><input type="number" id="v_nulos" min="0" value="0" class="voto-input w-full border rounded p-2 text-center text-lg font-bold" oninput="validarMatematica()"></div>
+                </div>
+
+                <!-- VALIDACIÓN -->
+                <div class="bg-gray-100 p-4 rounded-lg border-2 border-gray-300 mt-6" id="validacionContainer">
+                    <label class="block text-sm font-bold text-gray-800 mb-2 text-center">Total de Votos (Suma del Acta)</label>
+                    <input type="number" id="totalActa" required min="0" class="w-full border-2 border-gray-400 rounded-lg p-3 text-center text-2xl font-black focus:outline-none bg-white" placeholder="0" oninput="validarMatematica()">
+                    
+                    <div id="mensajeValidacion" class="mt-3 text-sm font-bold text-center text-gray-500">
+                        Ingresa el total para validar.
+                    </div>
+                </div>
+
+                <!-- EVIDENCIA -->
+                <div class="mt-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                    <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-camera text-red-600 mr-1"></i> Fotografía del Acta (Obligatorio)</label>
+                    <input type="file" id="fotoActa" accept="image/*" capture="environment" required class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100">
+                </div>
+
+                <button type="submit" id="btnEnviar" disabled class="w-full bg-pink-400 text-white font-bold py-4 rounded-lg mt-8 shadow-lg transition-colors duration-300 flex justify-center items-center">
+                    <i class="fas fa-paper-plane mr-2"></i> Enviar Resultados
+                </button>
+            </form>
+        </div>
+    </div>
 
     <script>
-        // 1. CONFIGURACIÓN SUPABASE
+        // INICIALIZAR SUPABASE
         const supabaseUrl = 'https://rllgivghmdvblycawraf.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsbGdpdmdobWR2Ymx5Y2F3cmFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNDI0NTEsImV4cCI6MjEwODcxODQ1MX0.DYr6vGxBaJUSiEYKlUsz4B3J1UNZ4STRyfg7Mz4-MC4';
         const cliente = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        let datosGlobales = []; 
-        let miGrafica = null;   
+let actaDuplicadaBloqueo = false;
+let currentUser = null;
+let idCasillaAsignada = null;
+let catalogoCasillas = []; // Guardará las 1,720 casillas
+let nombreCapturista = ""; // Guardará el nombre del usuario
 
-        // 2. CONFIGURACIÓN DE PARTIDOS Y ALIANZAS
-        const plantillaPartidos = [
-            { key: 'total_pan', label: 'PAN', color: '#1d4ed8' },
-            { key: 'total_pri', label: 'PRI', color: '#b91c1c' },
-            { key: 'total_prdt', label: 'PRD', color: '#eab308' },
-            { key: 'total_pt', label: 'PT', color: '#b91c1c' },
-            { key: 'total_pvem', label: 'PVEM', color: '#16a34a' },
-            { key: 'total_mc', label: 'MC', color: '#f97316' },
-            { key: 'total_morena', label: 'MORENA', color: '#7f1d1d' },
-            { key: 'total_pac', label: 'PAC', color: '#7e22ce' },
-            { key: 'total_rsp', label: 'RSP', color: '#374151' },
-            { key: 'total_fxm', label: 'FxM', color: '#ec4899' },
-            { key: 'total_somos', label: 'Somos MX', color: '#1e3a8a' },
-            { key: 'total_paz', label: 'PAZ', color: '#581c87' },
-            { key: 'total_panal', label: 'PANAL', color: '#14b8a6' },
-            { key: 'total_ind', label: 'Indep.', color: '#6b7280', esFijo: true },
-            { key: 'total_nulos', label: 'Nulos', color: '#000000', esFijo: true }
-        ];
+function showLoading(text) {
+    document.getElementById('loadingText').innerText = text;
+    document.getElementById('loadingOverlay').classList.remove('hidden');
+}
 
-        // Memoria dinámica: Guardará configuraciones separadas por cada "Elección + Zona"
-        let memoriaAlianzas = {}; 
+function hideLoading() {
+    document.getElementById('loadingOverlay').classList.add('hidden');
+}
 
-        function obtenerClaveZonaActual() {
-            const eleccion = document.getElementById('filtroEleccion').value;
-            const geo = document.getElementById('filtroGeo') ? document.getElementById('filtroGeo').value : '';
-            return `${eleccion}|${geo}`;
-        }
-
-        function obtenerEstadoAlianzas() {
-            const clave = obtenerClaveZonaActual();
-            // Si es la primera vez que vemos esta zona, le creamos un historial limpio (Individual)
-            if (!memoriaAlianzas[clave]) {
-                memoriaAlianzas[clave] = {};
-                plantillaPartidos.forEach((partido, index) => {
-                    memoriaAlianzas[clave][index] = partido.esFijo ? 'Fijo' : 'Ind';
-                });
-            }
-            return memoriaAlianzas[clave];
-        }
-
-        // 3. INICIALIZAR PANEL DE ALIANZAS
-        function inicializarPanelAlianzas() {
-            const grid = document.getElementById('gridAlianzas');
-            grid.innerHTML = '';
-            
-            const estadoActual = obtenerEstadoAlianzas();
-
-            plantillaPartidos.forEach((partido, index) => {
-                if (partido.esFijo) return; 
-
-                const grupoActual = estadoActual[index];
-                const div = document.createElement('div');
-                div.innerHTML = `
-                    <label class="block text-[10px] font-bold uppercase mb-1" style="color: ${partido.color}">${partido.label}</label>
-                    <select onchange="cambiarAlianza(${index}, this.value)" class="w-full border border-indigo-200 rounded p-1 text-xs focus:ring-1 focus:ring-indigo-500 bg-white">
-                        <option value="Ind" ${grupoActual === 'Ind' ? 'selected' : ''}>Individual</option>
-                        <option value="Alianza A" ${grupoActual === 'Alianza A' ? 'selected' : ''}>Alianza A</option>
-                        <option value="Alianza B" ${grupoActual === 'Alianza B' ? 'selected' : ''}>Alianza B</option>
-                        <option value="Alianza C" ${grupoActual === 'Alianza C' ? 'selected' : ''}>Alianza C</option>
-                    </select>
-                `;
-                grid.appendChild(div);
-            });
-        }
-
-        function cambiarAlianza(index, nuevoGrupo) {
-            const estadoActual = obtenerEstadoAlianzas();
-            estadoActual[index] = nuevoGrupo;
-            actualizarDashboard();
-        }
-
-        function toggleAlianzas() {
-            const panel = document.getElementById('panelAlianzas');
-            const icono = document.getElementById('iconoAlianzas');
-            if (panel.classList.contains('hidden')) {
-                panel.classList.remove('hidden');
-                icono.classList.replace('fa-chevron-down', 'fa-chevron-up');
-            } else {
-                panel.classList.add('hidden');
-                icono.classList.replace('fa-chevron-up', 'fa-chevron-down');
-            }
-        }
-
-        // 4. LÓGICA DE FILTROS DINÁMICOS
-        function cambioDeZona() {
-            inicializarPanelAlianzas();
-            actualizarDashboard();
-        }
-
-        function cambioDeEleccion() {
-            const eleccion = document.getElementById('filtroEleccion').value;
-            const contenedor = document.getElementById('contenedorFiltroGeo');
-            const label = document.getElementById('labelFiltroGeo');
-            const select = document.getElementById('filtroGeo');
-            
-            select.innerHTML = '';
-            
-            if (eleccion === 'Gobernador') {
-                contenedor.classList.add('hidden');
-            } else {
-                contenedor.classList.remove('hidden');
-                let valoresUnicos = new Set();
-                
-                datosGlobales.filter(d => d.tipo_eleccion === eleccion).forEach(d => {
-                    if (eleccion === 'Diputaciones Federales' && d.distrito_federal) {
-                        label.innerText = 'Distrito Federal';
-                        valoresUnicos.add(d.distrito_federal);
-                    }
-                    if (eleccion === 'Diputaciones Locales' && d.distrito_local) {
-                        label.innerText = 'Distrito Local';
-                        valoresUnicos.add(d.distrito_local);
-                    }
-                    if (eleccion === 'Ayuntamientos' && d.municipio) {
-                        label.innerText = 'Municipio';
-                        valoresUnicos.add(d.municipio);
-                    }
-                    if (eleccion === 'Presidencia de Comunidad' && d.municipio) {
-                        label.innerText = 'Municipio - Comunidad';
-                        const nombreComunidad = d.comunidad || 'Sin comunidad asignada';
-                        valoresUnicos.add(`${d.municipio} - ${nombreComunidad}`);
-                    }
-                });
-                
-                const arrayOrdenado = [...valoresUnicos].sort((a, b) => {
-                    const numA = parseInt(a); const numB = parseInt(b);
-                    if(!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                    return String(a).localeCompare(String(b));
-                });
-
-                if (arrayOrdenado.length === 0) {
-                    select.innerHTML = '<option value="">Sin actas registradas aún</option>';
-                } else {
-                    arrayOrdenado.forEach(val => {
-                        const textoOpcion = eleccion.includes('Diputaciones') ? `Distrito ${val}` : val;
-                        select.innerHTML += `<option value="${val}">${textoOpcion}</option>`;
-                    });
-                }
-            }
-            
-            inicializarPanelAlianzas();
-            actualizarDashboard();
-        }
-
-        // 5. CONSULTA A LA BASE DE DATOS
-        async function cargarDatos() {
-            const { data, error } = await cliente.from('vista_resultados_totales').select('*');
-            if (error) return alert("Error al cargar resultados.");
-            datosGlobales = data || [];
-            actualizarDashboard();
-        }
-
-        // 6. DIBUJAR / ACTUALIZAR EL DASHBOARD (CON SUMATORIA GEOGRÁFICA)
-        function actualizarDashboard() {
-            const eleccion = document.getElementById('filtroEleccion').value;
-            const geo = document.getElementById('filtroGeo').value;
-            
-            // A) Filtramos por tipo de elección Y por nivel geográfico
-            let datosFiltrados = datosGlobales.filter(d => d.tipo_eleccion === eleccion);
-            
-            if (eleccion !== 'Gobernador' && geo) {
-                if (eleccion === 'Diputaciones Federales') {
-                    datosFiltrados = datosFiltrados.filter(d => String(d.distrito_federal) === String(geo));
-                } else if (eleccion === 'Diputaciones Locales') {
-                    datosFiltrados = datosFiltrados.filter(d => String(d.distrito_local) === String(geo));
-                } else if (eleccion === 'Ayuntamientos') {
-                    datosFiltrados = datosFiltrados.filter(d => d.municipio === geo);
-                } else if (eleccion === 'Presidencia de Comunidad') {
-                    datosFiltrados = datosFiltrados.filter(d => {
-                        const com = d.comunidad || 'Sin comunidad asignada';
-                        return `${d.municipio} - ${com}` === geo;
-                    });
-                }
-            }
-
-            // B) Sumamos todas las filas que pasaron el filtro
-            const dataAcumulada = { actas_computadas: 0, gran_total_votos: 0 };
-            plantillaPartidos.forEach(p => dataAcumulada[p.key] = 0);
-            
-            datosFiltrados.forEach(row => {
-                dataAcumulada.actas_computadas += parseInt(row.actas_computadas) || 0;
-                dataAcumulada.gran_total_votos += parseInt(row.gran_total_votos) || 0;
-                plantillaPartidos.forEach(p => {
-                    dataAcumulada[p.key] += parseInt(row[p.key]) || 0;
-                });
-            });
-
-            // Actualizamos Contadores (KPIs)
-            document.getElementById('kpiActas').innerText = dataAcumulada.actas_computadas.toLocaleString();
-            document.getElementById('kpiVotos').innerText = dataAcumulada.gran_total_votos.toLocaleString();
-
-            // C) Lógica de Alianzas para la gráfica
-            let etiquetas = []; let valores = []; let colores = [];
-            let alianzasAcumuladas = {
-                'Alianza A': { votos: 0, nombres: [], colorBase: '#4f46e5' },
-                'Alianza B': { votos: 0, nombres: [], colorBase: '#dc2626' },
-                'Alianza C': { votos: 0, nombres: [], colorBase: '#059669' }
-            };
-
-            // Solicitamos el estado exacto de la zona que estamos viendo actualmente
-            const estadoActual = obtenerEstadoAlianzas();
-
-            plantillaPartidos.forEach((partido, index) => {
-                const votosPartido = dataAcumulada[partido.key] || 0;
-                
-                // Leemos del estado actual en lugar de la variable global antigua
-                const grupoActual = estadoActual[index]; 
-
-                if (grupoActual === 'Ind' || grupoActual === 'Fijo') {
-                    etiquetas.push(partido.label);
-                    valores.push(votosPartido);
-                    colores.push(partido.color);
-                } else {
-                    alianzasAcumuladas[grupoActual].votos += votosPartido;
-                    alianzasAcumuladas[grupoActual].nombres.push(partido.label);
-                    if (alianzasAcumuladas[grupoActual].nombres.length === 1) {
-                        alianzasAcumuladas[grupoActual].colorBase = partido.color;
-                    }
-                }
-            });
-
-            Object.keys(alianzasAcumuladas).forEach(nombreAlianza => {
-                const alianza = alianzasAcumuladas[nombreAlianza];
-                if (alianza.nombres.length > 0) {
-                    etiquetas.push(alianza.nombres.join(' - '));
-                    valores.push(alianza.votos);
-                    colores.push(alianza.colorBase);
-                }
-            });
-
-            renderizarGrafica(etiquetas, valores, colores);
-        }
-
-        // 7. INICIALIZAR CHART.JS
-        function renderizarGrafica(etiquetas, valores, colores) {
-            const ctx = document.getElementById('graficaVotos').getContext('2d');
-            if (miGrafica) miGrafica.destroy();
-            miGrafica = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: etiquetas,
-                    datasets: [{
-                        label: 'Votos', data: valores, backgroundColor: colores, borderRadius: 4
-                    }]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        y: { beginAtZero: true, grid: { color: '#f3f4f6' } },
-                        x: { grid: { display: false }, ticks: { font: { weight: 'bold' } } }
-                    }
-                }
-            });
-        }
-
-        // 8. CONEXIÓN EN TIEMPO REAL
-        function iniciarSuscripcionRealtime() {
-            cliente
-                .channel('actas_nuevas')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'resultados_actas' }, (payload) => {
-                    const btn = document.querySelector('nav button');
-                    const txtObj = btn.innerHTML;
-                    btn.innerHTML = `<i class="fas fa-bolt text-yellow-300 mr-2"></i> ¡Nuevos Votos!`;
-                    btn.classList.replace('bg-red-600', 'bg-green-600');
-                    setTimeout(() => {
-                        btn.innerHTML = txtObj;
-                        btn.classList.replace('bg-green-600', 'bg-red-600');
-                    }, 2000);
-                    
-                    cargarDatos(); // Descarga los datos nuevos y actualiza la gráfica sin perder el filtro actual
-                })
-                .subscribe();
-        }
-
-    // Exportación directa a PDF: carta horizontal, una página, sin captura HTML.
-    function exportarPDF() {
-        try {
-            const jsPDF = window.jspdf && window.jspdf.jsPDF;
-            if (!jsPDF) throw new Error('No se cargó la biblioteca de PDF.');
-
-            const eleccion = document.getElementById('filtroEleccion').value;
-            const geoSelect = document.getElementById('filtroGeo');
-            const geoContenedor = document.getElementById('contenedorFiltroGeo');
-            const mostrarGeo = geoContenedor && !geoContenedor.classList.contains('hidden');
-            const demarcacion = mostrarGeo && geoSelect && geoSelect.selectedIndex >= 0
-                ? geoSelect.options[geoSelect.selectedIndex].text : 'Todo el estado';
-            const actas = document.getElementById('kpiActas').textContent.trim();
-            const votos = document.getElementById('kpiVotos').textContent.trim();
-            const canvas = document.getElementById('graficaVotos');
-            if (!canvas || !miGrafica) throw new Error('La gráfica aún no está disponible.');
-
-            // Se utilizan unidades en milímetros para respetar el tamaño real de carta.
-            const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter', compress: true });
-            const ancho = pdf.internal.pageSize.getWidth();  // 279.4 mm
-            const alto = pdf.internal.pageSize.getHeight();   // 215.9 mm
-            const margen = 11;
-            const util = ancho - 2 * margen;
-
-            // Encabezado vectorial, siempre dentro de los márgenes.
-            pdf.setFillColor(91, 33, 182);
-            pdf.roundedRect(margen, 10, util, 22, 2, 2, 'F');
-            pdf.setTextColor(255, 255, 255);
-            pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(15);
-            pdf.text('PREP INTERNO - CENTRO DE MANDO', margen + 6, 19);
-            pdf.setFont('helvetica', 'normal');
-            pdf.setFontSize(10);
-            pdf.text(eleccion, margen + 6, 26);
-
-            // Datos reales de la pantalla (sin cifras fijas ni selectores ambiguos).
-            pdf.setFillColor(248, 250, 252);
-            pdf.setDrawColor(226, 232, 240);
-            pdf.roundedRect(margen, 36, util, 25, 2, 2, 'FD');
-            pdf.setTextColor(75, 85, 99);
-            pdf.setFontSize(9);
-            pdf.setFont('helvetica', 'normal');
-            pdf.text('DEMARCACIÓN', margen + 5, 43);
-            pdf.text('ACTAS COMPUTADAS', margen + 111, 43);
-            pdf.text('TOTAL DE VOTOS', margen + 186, 43);
-            pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(12);
-            pdf.setTextColor(31, 41, 55);
-            const zona = pdf.splitTextToSize(demarcacion, 98);
-            pdf.text(zona.slice(0, 2), margen + 5, 50);
-            pdf.setTextColor(185, 28, 28);
-            pdf.text(actas, margen + 111, 52);
-            pdf.setTextColor(29, 78, 216);
-            pdf.text(votos, margen + 186, 52);
-
-            pdf.setTextColor(55, 65, 81);
-            pdf.setFontSize(11);
-            pdf.setFont('helvetica', 'bold');
-            pdf.text('TENDENCIA DE VOTACIÓN', margen + 2, 69);
-
-            // La gráfica completa se ajusta proporcionalmente a un recuadro fijo.
-            // No se clona el HTML, evitando recortes por overflow y anchos en píxeles.
-            const cajaX = margen;
-            const cajaY = 73;
-            const cajaW = util;
-            const cajaH = alto - cajaY - 15;
-            pdf.setDrawColor(226, 232, 240);
-            pdf.setFillColor(255, 255, 255);
-            pdf.roundedRect(cajaX, cajaY, cajaW, cajaH, 2, 2, 'FD');
-
-            const imagen = canvas.toDataURL('image/png', 1);
-            const maxW = cajaW - 10;
-            const maxH = cajaH - 10;
-            const proporcion = Math.min(maxW / canvas.width, maxH / canvas.height);
-            const imgW = canvas.width * proporcion;
-            const imgH = canvas.height * proporcion;
-            pdf.addImage(imagen, 'PNG', cajaX + (cajaW - imgW) / 2,
-                cajaY + (cajaH - imgH) / 2, imgW, imgH);
-
-            pdf.setTextColor(107, 114, 128);
-            pdf.setFont('helvetica', 'normal');
-            pdf.setFontSize(8);
-            pdf.text('Generado: ' + new Date().toLocaleString('es-MX'), margen, alto - 6);
-            pdf.text('Página 1 de 1', ancho - margen, alto - 6, { align: 'right' });
-
-            const nombre = eleccion.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]+/g, '_');
-            pdf.save(`Reporte_PREP_${nombre}.pdf`);
-        } catch (error) {
-            console.error('Error al generar PDF:', error);
-            alert('No fue posible generar el PDF: ' + error.message);
-        }
+async function handleLogin(e) {
+    e.preventDefault();
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+    
+    showLoading("Iniciando sesión...");
+    const { data, error } = await cliente.auth.signInWithPassword({ email, password });
+    
+    if (error) {
+        hideLoading();
+        return alert("Error de acceso: " + error.message);
     }
 
-        // 9. ARRANQUE PRINCIPAL
-        window.addEventListener('DOMContentLoaded', async () => {
-            await cargarDatos();
-            cambioDeEleccion(); // Esto carga los filtros geográficos y las alianzas en base al primer dropdown
-            iniciarSuscripcionRealtime();
+    currentUser = data.user;
+
+    // 1. Obtener nombre del capturista
+    const { data: userData } = await cliente.from('usuarios').select('nombre_completo').eq('id_usuario', currentUser.id).single();
+    nombreCapturista = userData?.nombre_completo || 'Capturista';
+
+    // 2. Descargar catálogo completo de casillas (las 1720 de golpe)
+    showLoading("Descargando catálogo de casillas...");
+    const { data: casillasData, error: errCasillas } = await cliente.from('casillas').select('*');
+    
+    if (errCasillas) {
+        hideLoading();
+        return alert("Error al cargar el catálogo de casillas.");
+    }
+    
+    catalogoCasillas = casillasData;
+    idCasillaAsignada = null; 
+    actualizarHeaderCapturista();
+
+    // 3. Llenar el primer menú desplegable (Municipios)
+    const municipios = [...new Set(catalogoCasillas.map(c => c.municipio))].filter(Boolean).sort();
+    const selMun = document.getElementById('sel_municipio');
+    selMun.innerHTML = '<option value="">Selecciona Municipio...</option>';
+    municipios.forEach(m => selMun.innerHTML += `<option value="${m}">${m}</option>`);
+
+    hideLoading();
+    document.getElementById('loginView').classList.add('hidden');
+    document.getElementById('captureView').classList.remove('hidden');
+}
+
+async function verificarDuplicado() {
+            const casilla = idCasillaAsignada;
+            const eleccion = document.getElementById('tipoEleccion').value;
+            const alerta = document.getElementById('alertaDuplicado');
+            
+            // Solo consultamos si ya eligió ambas cosas
+            if (!casilla || !eleccion) {
+                actaDuplicadaBloqueo = false;
+                alerta.classList.add('hidden');
+                return;
+            }
+
+            // Consultar a la base de datos
+            const { data, error } = await cliente
+                .from('resultados_actas')
+                .select('id_resultado')
+                .eq('id_casilla', casilla)
+                .eq('tipo_eleccion', eleccion)
+                .limit(1);
+
+            if (data && data.length > 0) {
+                // Ya existe: Activamos el bloqueo y mostramos alerta
+                actaDuplicadaBloqueo = true;
+                alerta.classList.remove('hidden');
+                alerta.innerHTML = `<i class="fas fa-exclamation-triangle mr-2 text-lg"></i> <b>¡ALTO!</b> El acta de <b>${eleccion}</b> para la casilla <b>${casilla}</b> YA FUE CAPTURADA en el sistema. Verifica con tu coordinador.`;
+            } else {
+                // No existe: Vía libre
+                actaDuplicadaBloqueo = false;
+                alerta.classList.add('hidden');
+            }
+            
+            validarMatematica(); // Re-evaluamos el botón de envío
+        }
+
+async function logout() {
+    if(confirm("¿Seguro que deseas salir?")) {
+        await cliente.auth.signOut();
+        location.reload();
+    }
+}
+
+// VALIDACIÓN MATEMÁTICA EN TIEMPO REAL
+function validarMatematica() {
+    const inputs = document.querySelectorAll('.voto-input');
+    let sumaCalculada = 0;
+    inputs.forEach(input => {
+        sumaCalculada += parseInt(input.value) || 0;
+    });
+
+    const totalActaInput = document.getElementById('totalActa');
+    const totalActa = parseInt(totalActaInput.value);
+    const container = document.getElementById('validacionContainer');
+    const mensaje = document.getElementById('mensajeValidacion');
+    const btnEnviar = document.getElementById('btnEnviar');
+
+    if (actaDuplicadaBloqueo) {
+                btnEnviar.disabled = true;
+                btnEnviar.classList.replace('bg-green-600', 'bg-gray-400');
+                contenedor.classList.replace('bg-green-100', 'bg-gray-100');
+                contenedor.classList.replace('border-green-500', 'border-gray-300');
+                mensaje.innerText = "Captura bloqueada por acta duplicada.";
+                mensaje.classList.replace('text-green-700', 'text-gray-500');
+                return;
+            }
+
+    if (isNaN(totalActa)) {
+        container.className = "bg-gray-100 p-4 rounded-lg border-2 border-gray-300 mt-6";
+        mensaje.innerHTML = `Ingresa el total para validar.`;
+        mensaje.className = "mt-3 text-sm font-bold text-center text-gray-500";
+        btnEnviar.disabled = true;
+        btnEnviar.className = "w-full bg-gray-400 text-white font-bold py-4 rounded-lg mt-8 shadow-lg flex justify-center items-center";
+        return;
+    }
+
+    if (sumaCalculada === totalActa) {
+        container.className = "bg-green-50 p-4 rounded-lg border-2 border-green-500 mt-6";
+        totalActaInput.className = "w-full border-2 border-green-500 rounded-lg p-3 text-center text-2xl font-black text-green-700 bg-white focus:outline-none";
+        mensaje.innerHTML = `<i class="fas fa-check-circle"></i> ¡Cuadra perfectamente! (${sumaCalculada} votos)`;
+        mensaje.className = "mt-3 text-sm font-bold text-center text-green-600";
+        
+        btnEnviar.disabled = false;
+        btnEnviar.className = "w-full bg-pink-600 hover:bg-purple-700 text-white font-bold py-4 rounded-lg mt-8 shadow-xl transition-colors duration-300 flex justify-center items-center";
+    } else {
+        container.className = "bg-red-50 p-4 rounded-lg border-2 border-red-500 mt-6";
+        totalActaInput.className = "w-full border-2 border-red-500 rounded-lg p-3 text-center text-2xl font-black text-red-700 bg-white focus:outline-none";
+        mensaje.innerHTML = `<i class="fas fa-times-circle"></i> Discrepancia: La suma da ${sumaCalculada}, pero escribiste ${totalActa}.`;
+        mensaje.className = "mt-3 text-sm font-bold text-center text-red-600";
+        
+        btnEnviar.disabled = true;
+        btnEnviar.className = "w-full bg-gray-400 text-white font-bold py-4 rounded-lg mt-8 shadow-lg flex justify-center items-center cursor-not-allowed";
+    }
+}
+
+function filtrarCasillas(nivel) {
+    const mun = document.getElementById('sel_municipio').value;
+    const com = document.getElementById('sel_comunidad').value;
+    const sec = document.getElementById('sel_seccion').value;
+
+    const selCom = document.getElementById('sel_comunidad');
+    const selSec = document.getElementById('sel_seccion');
+    const selCas = document.getElementById('sel_casilla');
+
+    let filtradas = catalogoCasillas;
+
+    if (nivel === 'municipio') {
+        filtradas = filtradas.filter(c => c.municipio === mun);
+        selCom.innerHTML = '<option value="">Selecciona Localidad/Comunidad...</option>';
+        [...new Set(filtradas.map(c => c.comunidad))].filter(Boolean).sort().forEach(c => {
+            selCom.innerHTML += `<option value="${c}">${c}</option>`;
         });
+        
+        selCom.disabled = !mun;
+        selSec.disabled = true; selCas.disabled = true;
+        selSec.innerHTML = '<option value="">Sección...</option>';
+        selCas.innerHTML = '<option value="">Casilla...</option>';
+        idCasillaAsignada = null;
+    }
+
+    if (nivel === 'comunidad') {
+        filtradas = filtradas.filter(c => c.municipio === mun && c.comunidad === com);
+        selSec.innerHTML = '<option value="">Sección...</option>';
+        [...new Set(filtradas.map(c => c.seccion))].filter(Boolean).sort((a,b)=>a-b).forEach(s => {
+            selSec.innerHTML += `<option value="${s}">${s}</option>`;
+        });
+        
+        selSec.disabled = !com;
+        selCas.disabled = true;
+        selCas.innerHTML = '<option value="">Casilla...</option>';
+        idCasillaAsignada = null;
+    }
+
+    if (nivel === 'seccion') {
+        filtradas = filtradas.filter(c => c.municipio === mun && c.comunidad === com && c.seccion == sec);
+        selCas.innerHTML = '<option value="">Casilla...</option>';
+        filtradas.forEach(c => {
+            selCas.innerHTML += `<option value="${c.id_casilla}">${c.tipo_casilla} (${c.id_casilla})</option>`;
+        });
+        
+        selCas.disabled = !sec;
+        idCasillaAsignada = null;
+    }
+    
+    actualizarHeaderCapturista();
+}
+
+function confirmarCasilla() {
+    idCasillaAsignada = document.getElementById('sel_casilla').value;
+    actualizarHeaderCapturista();
+    verificarDuplicado();
+}
+
+function actualizarHeaderCapturista() {
+    const texto = idCasillaAsignada ? `Casilla: ${idCasillaAsignada}` : '⚠️ Falta seleccionar casilla';
+    document.getElementById('casillaAsignadaText').innerText = `${texto} | ${nombreCapturista}`;
+}
+
+async function submitActa(e) {
+    e.preventDefault();
+    const tipoEleccionSeleccionada = document.getElementById('tipoEleccion').value;
+    if (!idCasillaAsignada) {
+            alert("⚠️ Debes asignar una casilla usando el buscador azul antes de enviar el acta.");
+            return;
+        }
+        if (!tipoEleccionSeleccionada) {
+            alert("Debes seleccionar el Tipo de Elección en la parte superior del formulario.");
+            return;
+        }
+
+        const fotoFile = document.getElementById('fotoActa').files[0];
+        if (!fotoFile) {
+            alert("Debes tomar o subir la foto del acta.");
+            return;
+        }
+
+        showLoading("Subiendo foto del acta...");
+
+        try {
+            // Generamos un nombre único que incluye el tipo de elección para que no se sobreescriban las fotos
+            const fileExt = fotoFile.name.split('.').pop();
+            const tipoLimpio = tipoEleccionSeleccionada.replace(/\s+/g, '_');
+            const fileName = `${idCasillaAsignada}_${tipoLimpio}_${Date.now()}.${fileExt}`;
+            
+            const { data: uploadData, error: uploadError } = await cliente.storage
+                .from('actas_prep')
+                .upload(fileName, fotoFile, { cacheControl: '3600', upsert: false });
+
+            if (uploadError) throw new Error("Error al subir foto: " + uploadError.message);
+
+            const { data: publicUrlData } = cliente.storage
+                .from('actas_prep')
+                .getPublicUrl(fileName);
+            
+            const fotoUrl = publicUrlData.publicUrl;
+
+            showLoading("Guardando resultados...");
+
+            const { data: insertData, error: insertError } = await cliente
+                .from('resultados_actas')
+                .insert([
+                    {
+                        id_casilla: idCasillaAsignada,
+                        id_usuario: currentUser.id,
+                        tipo_eleccion: tipoEleccionSeleccionada,
+                        votos_pan: parseInt(document.getElementById('v_pan').value) || 0,
+                        votos_pri: parseInt(document.getElementById('v_pri').value) || 0,
+                        votos_prdt: parseInt(document.getElementById('v_prd').value) || 0,
+                        votos_pt: parseInt(document.getElementById('v_pt').value) || 0,
+                        votos_pvem: parseInt(document.getElementById('v_pvem').value) || 0,
+                        votos_mc: parseInt(document.getElementById('v_mc').value) || 0,
+                        votos_morena: parseInt(document.getElementById('v_morena').value) || 0,
+                        votos_pac: parseInt(document.getElementById('v_pac').value) || 0,
+                        votos_rsp: parseInt(document.getElementById('v_rsp').value) || 0,
+                        votos_fxm: parseInt(document.getElementById('v_fxm').value) || 0,
+                        votos_somos_mexico: parseInt(document.getElementById('v_somos').value) || 0,
+                        votos_paz: parseInt(document.getElementById('v_paz').value) || 0,
+                        votos_nueva_alianza: parseInt(document.getElementById('v_panal').value) || 0,
+                        votos_independiente: parseInt(document.getElementById('v_ind').value) || 0,
+                        votos_no_registrados: parseInt(document.getElementById('v_noreg').value) || 0,
+                        votos_nulos: parseInt(document.getElementById('v_nulos').value) || 0,
+                        total_votos_acta: parseInt(document.getElementById('totalActa').value),
+                        url_foto_acta: fotoUrl
+                    }
+                ]);
+
+            if (insertError) {
+                if(insertError.code === '23505') throw new Error(`Ya existe un acta de ${tipoEleccionSeleccionada} registrada para esta casilla.`);
+                throw new Error("Error al guardar: " + insertError.message);
+            }
+
+            hideLoading();
+            alert(`¡Acta de ${tipoEleccionSeleccionada} enviada exitosamente!`);
+            
+            // Limpiamos el formulario pero mantenemos al usuario en la misma pantalla por si va a capturar otra elección
+            document.getElementById('actaForm').reset();
+            validarMatematica();
+
+        } catch (err) {
+            hideLoading();
+            alert(err.message);
+        }
+    
+}
     </script>
 </body>
 </html>
