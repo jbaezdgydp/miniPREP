@@ -116,6 +116,28 @@
             </div>
         </div>
 
+        <!-- VISOR INDEPENDIENTE DE FOTOGRAFÍAS DE ACTAS -->
+        <section class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6" aria-labelledby="tituloVisorActas">
+            <button type="button" onclick="alternarVisorActas()" class="w-full flex justify-between items-center text-left font-bold text-purple-900" aria-controls="panelVisorActas" aria-expanded="false" id="botonVisorActas">
+                <span><i class="fas fa-file-image mr-2"></i>Consultar fotografía de acta</span><i class="fas fa-chevron-down" id="iconoVisorActas"></i>
+            </button>
+            <div id="panelVisorActas" class="hidden mt-4 border-t pt-4">
+                <p class="text-xs text-gray-600 mb-3">Consulta independiente: elección → municipio → localidad → sección → casilla. No modifica las gráficas ni los resultados.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <label class="text-xs font-bold">TIPO DE ELECCIÓN<select id="visorEleccion" onchange="actualizarFiltrosVisor(0)" class="block w-full mt-1 border rounded p-2 text-sm"><option value="">Seleccionar elección</option><option>Gobernador</option><option>Diputaciones Federales</option><option>Diputaciones Locales</option><option>Ayuntamientos</option><option>Presidencia de Comunidad</option></select></label>
+                    <label class="text-xs font-bold">MUNICIPIO<select id="visorMunicipio" onchange="actualizarFiltrosVisor(1)" disabled class="block w-full mt-1 border rounded p-2 text-sm"></select></label>
+                    <label class="text-xs font-bold">LOCALIDAD<select id="visorLocalidad" onchange="actualizarFiltrosVisor(2)" disabled class="block w-full mt-1 border rounded p-2 text-sm"></select></label>
+                    <label class="text-xs font-bold">SECCIÓN<select id="visorSeccion" onchange="actualizarFiltrosVisor(3)" disabled class="block w-full mt-1 border rounded p-2 text-sm"></select></label>
+                    <label class="text-xs font-bold">CASILLA<select id="visorCasilla" onchange="consultarFotografiaActa()" disabled class="block w-full mt-1 border rounded p-2 text-sm"></select></label>
+                </div>
+                <p id="visorEstado" role="status" aria-live="polite" class="text-sm text-gray-600 mt-4">Selecciona un tipo de elección.</p>
+                <div id="visorImagenContenedor" class="hidden mt-3 text-center">
+                    <img id="visorImagen" alt="Fotografía del acta seleccionada" class="max-w-full max-h-[650px] object-contain mx-auto border rounded" referrerpolicy="no-referrer">
+                    <a id="visorAbrirImagen" target="_blank" rel="noopener noreferrer" class="inline-block mt-3 text-purple-800 underline font-semibold">Abrir fotografía en otra pestaña</a>
+                </div>
+            </div>
+        </section>
+
     </main>
 
     <div id="modalAccesoAlianzas" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
@@ -605,6 +627,119 @@
                 if (!vals.length) select.add(new Option('Sin actas registradas aún',''));
             }
             cargarAlianzasZona();
+        }
+
+        // VISOR DE ACTAS: consulta independiente de los filtros de resultados.
+        let solicitudImagenActa = 0;
+        const camposVisor = ['visorMunicipio', 'visorLocalidad', 'visorSeccion', 'visorCasilla'];
+        const textoVisor = v => String(v ?? '').trim();
+        function alternarVisorActas() {
+            const panel = document.getElementById('panelVisorActas');
+            const abrir = panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !abrir);
+            document.getElementById('botonVisorActas').setAttribute('aria-expanded', String(abrir));
+            document.getElementById('iconoVisorActas').className = abrir ? 'fas fa-chevron-up' : 'fas fa-chevron-down';
+            if (abrir && catalogoCasillasListo) actualizarFiltrosVisor(-1);
+        }
+        function limpiarImagenVisor(mensaje) {
+            ++solicitudImagenActa;
+            document.getElementById('visorImagenContenedor').classList.add('hidden');
+            document.getElementById('visorImagen').removeAttribute('src');
+            document.getElementById('visorAbrirImagen').removeAttribute('href');
+            document.getElementById('visorEstado').textContent = mensaje;
+        }
+        function opcionesVisor(id, valores, titulo) {
+            const el = document.getElementById(id);
+            el.replaceChildren(new Option(titulo, ''));
+            [...new Set(valores.map(textoVisor).filter(Boolean))]
+                .sort((a,b) => a.localeCompare(b, 'es-MX', {numeric:true}))
+                .forEach(v => el.add(new Option(v, v)));
+            el.disabled = el.options.length === 1;
+        }
+        function actualizarFiltrosVisor(nivel) {
+            limpiarImagenVisor('Selecciona los filtros hasta llegar a una casilla.');
+            for (let i = Math.max(0, nivel + 1); i < camposVisor.length; i++) {
+                const el = document.getElementById(camposVisor[i]);
+                el.replaceChildren(new Option('Seleccionar', ''));
+                el.disabled = true;
+            }
+            const eleccion = document.getElementById('visorEleccion').value;
+            if (!eleccion) return;
+            if (!catalogoCasillasListo) {
+                document.getElementById('visorEstado').textContent = 'El catálogo de casillas aún no está disponible. Pulsa Actualizar Datos.';
+                return;
+            }
+            const mun = document.getElementById('visorMunicipio').value;
+            const loc = document.getElementById('visorLocalidad').value;
+            const sec = document.getElementById('visorSeccion').value;
+            if (nivel < 0) opcionesVisor('visorMunicipio', catalogoCasillas.map(c => c.municipio), 'Seleccionar municipio');
+            if (nivel === 0) opcionesVisor('visorMunicipio', catalogoCasillas.map(c => c.municipio), 'Seleccionar municipio');
+            if (nivel <= 0 || !mun) return;
+            const delMunicipio = catalogoCasillas.filter(c => nCom(c.municipio) === nCom(mun));
+            if (nivel === 1) opcionesVisor('visorLocalidad', delMunicipio.map(c => comunidadNombre(c)), 'Seleccionar localidad');
+            if (nivel <= 1 || !loc) return;
+            const deLocalidad = delMunicipio.filter(c => nCom(comunidadNombre(c)) === nCom(loc));
+            if (nivel === 2) opcionesVisor('visorSeccion', deLocalidad.map(c => c.seccion), 'Seleccionar sección');
+            if (nivel <= 2 || !sec) return;
+            const deSeccion = deLocalidad.filter(c => textoVisor(c.seccion) === sec);
+            if (nivel === 3) {
+                const cas = document.getElementById('visorCasilla');
+                cas.replaceChildren(new Option('Seleccionar casilla', ''));
+                deSeccion.sort((a,b) => textoVisor(a.tipo_casilla).localeCompare(textoVisor(b.tipo_casilla),'es-MX',{numeric:true}));
+                deSeccion.forEach(c => cas.add(new Option(`${c.tipo_casilla || 'Casilla'} — ${c.id_casilla}`, String(c.id_casilla))));
+                cas.disabled = cas.options.length === 1;
+            }
+        }
+        function urlImagenActa(valor) {
+            const raw = textoVisor(valor);
+            if (!raw) return null;
+            // No permitir enlaces ajenos al proyecto Supabase.
+            if (/^https:\/\//i.test(raw)) {
+                try {
+                    const u = new URL(raw);
+                    return u.origin === new URL(supabaseUrl).origin && u.pathname.startsWith('/storage/v1/object/public/actas_prep/') ? u.href : null;
+                } catch { return null; }
+            }
+            const ruta = raw.replace(/^\/+/, '').replace(/^actas_prep\//, '');
+            if (!ruta || ruta.split('/').some(p => p === '..' || p === '.')) return null;
+            const { data } = cliente.storage.from('actas_prep').getPublicUrl(ruta);
+            return data?.publicUrl || null;
+        }
+        async function consultarFotografiaActa() {
+            limpiarImagenVisor('Consultando fotografía…');
+            const secuencia = solicitudImagenActa;
+            const eleccion = document.getElementById('visorEleccion').value;
+            const idCasilla = document.getElementById('visorCasilla').value;
+            if (!eleccion || !idCasilla) {
+                document.getElementById('visorEstado').textContent = 'Selecciona una casilla.';
+                return;
+            }
+            try {
+                const { data, error } = await cliente.from('resultados_actas')
+                    .select('id_resultado,url_foto_acta')
+                    .eq('tipo_eleccion', eleccion)
+                    .eq('id_casilla', idCasilla)
+                    .order('id_resultado', {ascending:false})
+                    .limit(1);
+                if (error) throw error;
+                if (secuencia !== solicitudImagenActa) return;
+                const foto = data?.[0]?.url_foto_acta;
+                if (!foto) {
+                    document.getElementById('visorEstado').textContent = 'Acta no disponible: no hay fotografía registrada para esta elección y casilla.';
+                    return;
+                }
+                const url = urlImagenActa(foto);
+                if (!url) throw new Error('La dirección registrada no corresponde a una fotografía pública válida del bucket actas_prep.');
+                const img = document.getElementById('visorImagen');
+                img.onload = () => { if (secuencia === solicitudImagenActa) document.getElementById('visorEstado').textContent = 'Fotografía encontrada.'; };
+                img.onerror = () => { if (secuencia === solicitudImagenActa) { document.getElementById('visorImagenContenedor').classList.add('hidden'); document.getElementById('visorEstado').textContent = 'No fue posible abrir la fotografía almacenada.'; } };
+                img.src = url;
+                document.getElementById('visorAbrirImagen').href = url;
+                document.getElementById('visorImagenContenedor').classList.remove('hidden');
+            } catch (err) {
+                if (secuencia === solicitudImagenActa) document.getElementById('visorEstado').textContent = 'No fue posible consultar el acta: ' + err.message;
+                console.error('Visor de actas:', err);
+            }
         }
 
         // 5. CONSULTA A LA BASE DE DATOS
