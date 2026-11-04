@@ -167,7 +167,9 @@
                     autoRefreshToken: true, detectSessionInUrl: false }
         });
 
-let actaDuplicadaBloqueo = false;
+let actaDuplicadaBloqueo = true; // Cerrado hasta verificar con Supabase.
+let consultaDuplicadoVersion = 0;
+let envioEnCurso = false;
 let currentUser = null;
 let idCasillaAsignada = null;
 let catalogoCasillas = []; // Guardará las 1,720 casillas
@@ -216,15 +218,28 @@ async function handleLogin(e) {
     const { data: userData } = await cliente.from('usuarios').select('nombre_completo').eq('id_usuario', currentUser.id).single();
     nombreCapturista = userData?.nombre_completo || 'Capturista';
 
-    // 2. Descargar catálogo completo de casillas (las 1720 de golpe)
+    // 2. Descargar el catálogo completo en páginas para superar el límite de 1,000 filas.
     showLoading("Descargando catálogo de casillas...");
-    const { data: casillasData, error: errCasillas } = await cliente.from('casillas').select('*');
-    
-    if (errCasillas) {
+    const casillasData = [];
+    const tamanoPagina = 500;
+    try {
+        for (let inicio = 0; ; inicio += tamanoPagina) {
+            const { data: pagina, error: errCasillas } = await cliente
+                .from('casillas')
+                .select('*')
+                .order('id_casilla', { ascending: true })
+                .range(inicio, inicio + tamanoPagina - 1);
+            if (errCasillas) throw errCasillas;
+            if (!pagina || pagina.length === 0) break;
+            casillasData.push(...pagina);
+            if (pagina.length < tamanoPagina) break;
+        }
+        if (casillasData.length === 0) throw new Error('El catálogo está vacío.');
+    } catch (errCasillas) {
         hideLoading();
-        return alert("Error al cargar el catálogo de casillas.");
+        return alert("Error al cargar el catálogo completo de casillas: " + (errCasillas.message || String(errCasillas)));
     }
-    
+
     catalogoCasillas = casillasData;
     idCasillaAsignada = null; 
     actualizarHeaderCapturista();
@@ -241,38 +256,43 @@ async function handleLogin(e) {
 }
 
 async function verificarDuplicado() {
-            const casilla = idCasillaAsignada;
-            const eleccion = document.getElementById('tipoEleccion').value;
-            const alerta = document.getElementById('alertaDuplicado');
-            
-            // Solo consultamos si ya eligió ambas cosas
-            if (!casilla || !eleccion) {
-                actaDuplicadaBloqueo = false;
-                alerta.classList.add('hidden');
-                return;
-            }
-
-            // Consultar a la base de datos
-            const { data, error } = await cliente
-                .from('resultados_actas')
-                .select('id_resultado')
-                .eq('id_casilla', casilla)
-                .eq('tipo_eleccion', eleccion)
-                .limit(1);
-
-            if (data && data.length > 0) {
-                // Ya existe: Activamos el bloqueo y mostramos alerta
-                actaDuplicadaBloqueo = true;
-                alerta.classList.remove('hidden');
-                alerta.innerHTML = `<i class="fas fa-exclamation-triangle mr-2 text-lg"></i> <b>¡ALTO!</b> El acta de <b>${eleccion}</b> para la casilla <b>${casilla}</b> YA FUE CAPTURADA en el sistema. Verifica con tu coordinador.`;
-            } else {
-                // No existe: Vía libre
-                actaDuplicadaBloqueo = false;
-                alerta.classList.add('hidden');
-            }
-            
-            validarMatematica(); // Re-evaluamos el botón de envío
+    const version = ++consultaDuplicadoVersion;
+    const casilla = idCasillaAsignada;
+    const eleccion = document.getElementById('tipoEleccion').value;
+    const alerta = document.getElementById('alertaDuplicado');
+    actaDuplicadaBloqueo = true; // No habilitar mientras se consulta.
+    if (!casilla || !eleccion) {
+        alerta.classList.add('hidden');
+        validarMatematica();
+        return false;
+    }
+    alerta.classList.remove('hidden');
+    alerta.textContent = 'Comprobando si el acta ya existe...';
+    validarMatematica();
+    try {
+        const { data, error } = await cliente.from('resultados_actas')
+            .select('id_resultado').eq('id_casilla', casilla)
+            .eq('tipo_eleccion', eleccion).limit(1);
+        // Una respuesta anterior no debe cambiar la selección actual.
+        if (version !== consultaDuplicadoVersion || casilla !== idCasillaAsignada ||
+            eleccion !== document.getElementById('tipoEleccion').value) return false;
+        if (error) throw error;
+        if (data && data.length) {
+            alerta.textContent = `¡ALTO! El acta de ${eleccion} para la casilla ${casilla} YA FUE CAPTURADA. Verifica con tu coordinador.`;
+            return false;
         }
+        actaDuplicadaBloqueo = false;
+        alerta.classList.add('hidden');
+        return true;
+    } catch (err) {
+        if (version === consultaDuplicadoVersion) {
+            alerta.textContent = 'No fue posible verificar duplicados en Supabase. Comprueba la conexión y vuelve a seleccionar el tipo de elección.';
+        }
+        return false;
+    } finally {
+        if (version === consultaDuplicadoVersion) validarMatematica();
+    }
+}
 
 async function logout() {
     if(confirm("¿Seguro que deseas salir?")) {
@@ -298,8 +318,8 @@ function validarMatematica() {
     if (actaDuplicadaBloqueo) {
                 btnEnviar.disabled = true;
                 btnEnviar.classList.replace('bg-green-600', 'bg-gray-400');
-                contenedor.classList.replace('bg-green-100', 'bg-gray-100');
-                contenedor.classList.replace('border-green-500', 'border-gray-300');
+                container.classList.replace('bg-green-100', 'bg-gray-100');
+                container.classList.replace('border-green-500', 'border-gray-300');
                 mensaje.innerText = "Captura bloqueada por acta duplicada.";
                 mensaje.classList.replace('text-green-700', 'text-gray-500');
                 return;
@@ -320,7 +340,7 @@ function validarMatematica() {
         mensaje.innerHTML = `<i class="fas fa-check-circle"></i> ¡Cuadra perfectamente! (${sumaCalculada} votos)`;
         mensaje.className = "mt-3 text-sm font-bold text-center text-green-600";
         
-        btnEnviar.disabled = false;
+        btnEnviar.disabled = envioEnCurso || actaDuplicadaBloqueo;
         btnEnviar.className = "w-full bg-pink-600 hover:bg-purple-700 text-white font-bold py-4 rounded-lg mt-8 shadow-xl transition-colors duration-300 flex justify-center items-center";
     } else {
         container.className = "bg-red-50 p-4 rounded-lg border-2 border-red-500 mt-6";
@@ -334,6 +354,11 @@ function validarMatematica() {
 }
 
 function filtrarCasillas(nivel) {
+    // Invalidar consultas pendientes al cambiar cualquier filtro de casilla.
+    ++consultaDuplicadoVersion;
+    actaDuplicadaBloqueo = true;
+    document.getElementById('alertaDuplicado').classList.add('hidden');
+    validarMatematica();
     const mun = document.getElementById('sel_municipio').value;
     const com = document.getElementById('sel_comunidad').value;
     const sec = document.getElementById('sel_seccion').value;
@@ -396,8 +421,81 @@ function actualizarHeaderCapturista() {
     document.getElementById('casillaAsignadaText').innerText = `${texto} | ${nombreCapturista}`;
 }
 
+// Paso 11.71.6: reintentos limitados y verificación del objeto antes de repetir.
+const esperarSubida = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function errorTemporalStorage(error) {
+    const codigo = Number(error?.statusCode ?? error?.status ?? error?.originalError?.status);
+    if ([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(codigo)) return true;
+    // Un fallo de transporte puede carecer de código HTTP.
+    const mensaje = String(error?.message || '').toLowerCase();
+    return !codigo && /fetch|network|timeout|timed out|connection|failed to fetch/.test(mensaje);
+}
+
+async function comprobarFotoEnStorage(nombre, tamanoEsperado) {
+    // Se usa la URL pública del bucket actas_prep, sin descargar la fotografía.
+    const { data } = cliente.storage.from('actas_prep').getPublicUrl(nombre);
+    try {
+        const respuesta = await fetch(data.publicUrl + '?verificacion=' + Date.now(), {
+            method: 'HEAD', cache: 'no-store'
+        });
+        if (respuesta.ok) {
+            const longitud = respuesta.headers.get('content-length');
+            // Si no podemos contrastar el tamaño, no damos por válida una carga incierta.
+            if (longitud === null) return 'incierto';
+            return Number(longitud) === tamanoEsperado ? 'existe' : 'distinto';
+        }
+        if (respuesta.status === 404) return 'ausente';
+        return 'incierto';
+    } catch (_) {
+        return 'incierto';
+    }
+}
+
+async function subirFotoConReintentos(nombre, archivo) {
+    const almacenamiento = cliente.storage.from('actas_prep');
+    for (let intento = 0; intento <= 2; intento++) {
+        showLoading(intento === 0 ? 'Subiendo foto del acta...' :
+            `Reintentando subida de fotografía (${intento} de 2)...`);
+        let error;
+        try {
+            const resultado = await almacenamiento.upload(nombre, archivo, {
+                cacheControl: '3600', upsert: false
+            });
+            error = resultado.error;
+            if (!error) return;
+        } catch (excepcion) {
+            error = excepcion;
+        }
+        if (!errorTemporalStorage(error)) {
+            throw new Error('Error al subir foto: ' + (error.message || String(error)));
+        }
+        // Una respuesta 520 o una desconexión NO prueba que la subida haya fallado.
+        // Comprobar dos veces para evitar un 404 momentáneo de propagación.
+        await esperarSubida(1000);
+        let estado = await comprobarFotoEnStorage(nombre, archivo.size);
+        if (estado === 'ausente') {
+            await esperarSubida(1000);
+            estado = await comprobarFotoEnStorage(nombre, archivo.size);
+        }
+        if (estado === 'existe') return;
+        if (estado !== 'ausente') {
+            throw new Error('La subida tuvo un error temporal, pero no se pudo confirmar el estado de la fotografía. No se reintentó para evitar duplicados. Conserva el formulario y solicita una revisión.');
+        }
+        if (intento === 2) {
+            throw new Error('No se pudo subir la fotografía después de dos reintentos. Se conservaron los datos del formulario.');
+        }
+        await esperarSubida(intento === 0 ? 1500 : 3000);
+    }
+}
+
 async function submitActa(e) {
     e.preventDefault();
+    if (envioEnCurso) return;
+    envioEnCurso = true;
+    const botonEnvio = document.getElementById('btnEnviar');
+    botonEnvio.disabled = true;
+    try {
     const tipoEleccionSeleccionada = document.getElementById('tipoEleccion').value;
     if (!idCasillaAsignada) {
             alert("⚠️ Debes asignar una casilla usando el buscador azul antes de enviar el acta.");
@@ -408,6 +506,11 @@ async function submitActa(e) {
             return;
         }
 
+        // Revalidar justo antes de subir una foto (no confiar en un resultado anterior).
+        if (!(await verificarDuplicado())) {
+            alert('No se puede enviar: acta duplicada o no se pudo verificar su existencia.');
+            return;
+        }
         const fotoFile = document.getElementById('fotoActa').files[0];
         if (!fotoFile) {
             alert("Debes tomar o subir la foto del acta.");
@@ -424,17 +527,20 @@ async function submitActa(e) {
 
         showLoading("Subiendo foto del acta...");
 
+        // Ruta de esta subida y estado de la escritura en la base de datos.
+        // Nunca borramos una foto si no sabemos si el INSERT llegó a confirmarse.
+        let fotoSubida = null;
+        let insercionIntentada = false;
+        let insercionRechazada = false;
+
         try {
             // Generamos un nombre único que incluye el tipo de elección para que no se sobreescriban las fotos
             const fileExt = fotoFile.name.split('.').pop();
             const tipoLimpio = tipoEleccionSeleccionada.replace(/\s+/g, '_');
             const fileName = `${idCasillaAsignada}_${tipoLimpio}_${Date.now()}.${fileExt}`;
             
-            const { data: uploadData, error: uploadError } = await cliente.storage
-                .from('actas_prep')
-                .upload(fileName, fotoFile, { cacheControl: '3600', upsert: false });
-
-            if (uploadError) throw new Error("Error al subir foto: " + uploadError.message);
+            await subirFotoConReintentos(fileName, fotoFile);
+            fotoSubida = fileName;
 
             const { data: publicUrlData } = cliente.storage
                 .from('actas_prep')
@@ -446,6 +552,7 @@ async function submitActa(e) {
             const idCapturistaVerificado = await validarIdentidadCapturista();
             showLoading("Guardando resultados...");
 
+            insercionIntentada = true;
             const { data: insertData, error: insertError } = await cliente
                 .from('resultados_actas')
                 .insert([
@@ -475,7 +582,13 @@ async function submitActa(e) {
                 ]);
 
             if (insertError) {
-                if(insertError.code === '23505') throw new Error(`Ya existe un acta de ${tipoEleccionSeleccionada} registrada para esta casilla.`);
+                // Son rechazos explícitos de PostgreSQL; no hubo INSERT exitoso.
+                // Para errores de red o estado incierto, conservamos la fotografía.
+                const codigosRechazo = ['23505', '23503', '23502', '23514', '42501', '22P02'];
+                insercionRechazada = codigosRechazo.includes(insertError.code);
+                if (insertError.code === '23505') {
+                    throw new Error(`Ya existe un acta de ${tipoEleccionSeleccionada} registrada para esta casilla.`);
+                }
                 throw new Error("Error al guardar: " + insertError.message);
             }
 
@@ -484,13 +597,33 @@ async function submitActa(e) {
             
             // Limpiamos el formulario pero mantenemos al usuario en la misma pantalla por si va a capturar otra elección
             document.getElementById('actaForm').reset();
+            ++consultaDuplicadoVersion;
+            actaDuplicadaBloqueo = true;
+            document.getElementById('alertaDuplicado').classList.add('hidden');
             validarMatematica();
 
         } catch (err) {
+            let aviso = err.message || String(err);
+            if (fotoSubida && (!insercionIntentada || insercionRechazada)) {
+                // La escritura no comenzó o PostgreSQL la rechazó expresamente.
+                // Solo intentamos borrar el objeto que subió esta operación.
+                try {
+                    const { error: errorLimpieza } = await cliente.storage
+                        .from('actas_prep').remove([fotoSubida]);
+                    if (errorLimpieza) throw errorLimpieza;
+                } catch (errorLimpieza) {
+                    aviso += '\nNo se pudo retirar la fotografía de esta captura: ' + (errorLimpieza.message || String(errorLimpieza));
+                }
+            } else if (fotoSubida && insercionIntentada) {
+                aviso += '\nNo se eliminó la fotografía: no es seguro que el registro haya fallado. Solicita una revisión antes de reintentar.';
+            }
             hideLoading();
-            alert(err.message);
+            alert(aviso);
         }
-    
+    } finally {
+        envioEnCurso = false;
+        validarMatematica();
+    }
 }
     </script>
 </body>
