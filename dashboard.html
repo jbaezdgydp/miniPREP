@@ -648,20 +648,52 @@
             }).length;
         }
 
+        // Una sola carga activa; las solicitudes recibidas durante ella se agrupan.
+        let cargaDatosActiva = false;
+        let cargaDatosPendiente = false;
+        let temporizadorActualizacion = null;
+        const ESPERA_REALTIME_MS = 3000;
+
         async function cargarDatos() {
-            const { data, error } = await cliente.from('vista_resultados_totales').select('*');
-            if (error) return alert('Error al cargar resultados.');
-            datosGlobales = data || [];
-            if (!catalogoCasillasListo) {
-                try { await cargarCatalogoCasillas(); }
-                catch (err) { console.error('Error al consultar casillas:', err); }
+            if (cargaDatosActiva) {
+                cargaDatosPendiente = true;
+                return;
             }
-            await cargarResultadosPorCasilla();
-            if (seleccion('filtroEleccion') === 'Presidencia de Comunidad') {
-                cambiarComunidadCom();
-            } else {
-                actualizarDashboard();
+            cargaDatosActiva = true;
+            try {
+                do {
+                    cargaDatosPendiente = false;
+                    const { data, error } = await cliente.from('vista_resultados_totales').select('*');
+                    if (error) throw error;
+                    // Mantener los datos anteriores hasta terminar las consultas.
+                    if (!catalogoCasillasListo) {
+                        try { await cargarCatalogoCasillas(); }
+                        catch (err) { console.error('Error al consultar casillas:', err); }
+                    }
+                    await cargarResultadosPorCasilla();
+                    datosGlobales = data || [];
+                    if (seleccion('filtroEleccion') === 'Presidencia de Comunidad') {
+                        cambiarComunidadCom();
+                    } else {
+                        actualizarDashboard();
+                    }
+                } while (cargaDatosPendiente);
+            } catch (err) {
+                console.error('Error al cargar resultados:', err);
+                // Evitar una cadena infinita de reintentos ante una falla de red.
+                alert('Error al cargar resultados. Puedes intentar nuevamente con Actualizar Datos.');
+            } finally {
+                cargaDatosActiva = false;
             }
+        }
+
+        function programarActualizacionRealtime() {
+            // Reinicia la espera: múltiples eventos cercanos generan una sola consulta.
+            clearTimeout(temporizadorActualizacion);
+            temporizadorActualizacion = setTimeout(() => {
+                temporizadorActualizacion = null;
+                cargarDatos();
+            }, ESPERA_REALTIME_MS);
         }
 
         // 6. DIBUJAR / ACTUALIZAR EL DASHBOARD (CON SUMATORIA GEOGRÁFICA)
@@ -825,19 +857,23 @@
         function iniciarSuscripcionRealtime() {
             cliente
                 .channel('actas_nuevas')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'resultados_actas' }, (payload) => {
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'resultados_actas' }, () => {
                     const btn = document.querySelector('nav button');
-                    const txtObj = btn.innerHTML;
+                    // La notificación es visual; el refresco se agrupa y no se solapa.
                     btn.innerHTML = `<i class="fas fa-bolt text-yellow-300 mr-2"></i> ¡Nuevos Votos!`;
                     btn.classList.replace('bg-red-600', 'bg-green-600');
-                    setTimeout(() => {
-                        btn.innerHTML = txtObj;
+                    clearTimeout(iniciarSuscripcionRealtime.avisoTimer);
+                    iniciarSuscripcionRealtime.avisoTimer = setTimeout(() => {
+                        btn.innerHTML = `<i class="fas fa-sync-alt mr-2"></i> Actualizar Datos`;
                         btn.classList.replace('bg-green-600', 'bg-red-600');
                     }, 2000);
-                    
-                    cargarDatos(); // Descarga los datos nuevos y actualiza la gráfica sin perder el filtro actual
+                    programarActualizacionRealtime();
                 })
-                .subscribe();
+                .subscribe(status => {
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.warn('Realtime no está disponible:', status);
+                    }
+                });
         }
 
     // Exportación directa a PDF: carta horizontal, una página, sin captura HTML.
