@@ -148,6 +148,7 @@
                 <div class="mt-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
                     <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-camera text-red-600 mr-1"></i> Fotografía del Acta (Obligatorio)</label>
                     <input type="file" id="fotoActa" accept="image/*" capture="environment" required class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100">
+                    <p class="text-xs text-gray-500 mt-2">La fotografía se optimizará automáticamente antes de enviarse. El archivo almacenado será de 1 MB o menos.</p>
                 </div>
 
                 <button type="submit" id="btnEnviar" disabled class="w-full bg-pink-400 text-white font-bold py-4 rounded-lg mt-8 shadow-lg transition-colors duration-300 flex justify-center items-center">
@@ -421,6 +422,80 @@ function actualizarHeaderCapturista() {
     document.getElementById('casillaAsignadaText').innerText = `${texto} | ${nombreCapturista}`;
 }
 
+// Compresión local de evidencias: el archivo nunca llega a Supabase por encima de 1 MB.
+// Se conserva la imagen completa; primero se ajusta calidad y después dimensiones.
+const TAMANO_MAXIMO_FOTO = 1_000_000; // 1 MB decimal
+const DIMENSION_MAXIMA_FOTO = 3600;
+const DIMENSION_MINIMA_FOTO = 320;
+
+function cargarImagenParaCompresion(archivo) {
+    if (typeof createImageBitmap === 'function') {
+        return createImageBitmap(archivo).then(bitmap => ({
+            fuente: bitmap, ancho: bitmap.width, alto: bitmap.height,
+            cerrar: () => bitmap.close()
+        }));
+    }
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(archivo);
+        const imagen = new Image();
+        imagen.onload = () => resolve({
+            fuente: imagen, ancho: imagen.naturalWidth, alto: imagen.naturalHeight,
+            cerrar: () => URL.revokeObjectURL(url)
+        });
+        imagen.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No fue posible leer la fotografía. Intenta seleccionarla nuevamente.')); };
+        imagen.src = url;
+    });
+}
+
+function convertirCanvasAJpeg(canvas, calidad) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('El navegador no pudo procesar la fotografía.')), 'image/jpeg', calidad);
+    });
+}
+
+async function comprimirFotografiaActa(archivo) {
+    if (!archivo || !archivo.type || !archivo.type.startsWith('image/')) {
+        throw new Error('El archivo seleccionado no es una imagen válida.');
+    }
+    const imagen = await cargarImagenParaCompresion(archivo);
+    try {
+        let factor = Math.min(1, DIMENSION_MAXIMA_FOTO / Math.max(imagen.ancho, imagen.alto));
+        let ancho = Math.max(1, Math.round(imagen.ancho * factor));
+        let alto = Math.max(1, Math.round(imagen.alto * factor));
+        const canvas = document.createElement('canvas');
+        const contexto = canvas.getContext('2d', { alpha: false });
+        if (!contexto) throw new Error('Este navegador no permite procesar la fotografía.');
+
+        while (true) {
+            canvas.width = ancho;
+            canvas.height = alto;
+            contexto.fillStyle = '#ffffff';
+            contexto.fillRect(0, 0, ancho, alto);
+            contexto.drawImage(imagen.fuente, 0, 0, ancho, alto);
+
+            // Se intenta de mayor a menor calidad antes de reducir resolución.
+            for (const calidad of [0.90, 0.86, 0.82, 0.78, 0.74, 0.70, 0.66, 0.62, 0.58, 0.54, 0.50, 0.46, 0.42, 0.38, 0.34, 0.30, 0.26]) {
+                const blob = await convertirCanvasAJpeg(canvas, calidad);
+                if (blob.size <= TAMANO_MAXIMO_FOTO) {
+                    const nombreBase = (archivo.name || 'acta').replace(/\.[^.]+$/, '') || 'acta';
+                    return new File([blob], `${nombreBase}.jpg`, {
+                        type: 'image/jpeg', lastModified: Date.now()
+                    });
+                }
+            }
+
+            const dimensionMayor = Math.max(ancho, alto);
+            if (dimensionMayor <= DIMENSION_MINIMA_FOTO) break;
+            const escala = Math.max(DIMENSION_MINIMA_FOTO / dimensionMayor, 0.85);
+            ancho = Math.max(1, Math.round(ancho * escala));
+            alto = Math.max(1, Math.round(alto * escala));
+        }
+        throw new Error('No fue posible reducir la fotografía a 1 MB sin aplicar una compresión que podría afectar la lectura del acta. Intenta tomar la foto con mejor iluminación y encuadre, sin alejarte demasiado.');
+    } finally {
+        imagen.cerrar();
+    }
+}
+
 // Paso 11.71.6: reintentos limitados y verificación del objeto antes de repetir.
 const esperarSubida = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -460,7 +535,7 @@ async function subirFotoConReintentos(nombre, archivo) {
         let error;
         try {
             const resultado = await almacenamiento.upload(nombre, archivo, {
-                cacheControl: '3600', upsert: false
+                cacheControl: '3600', upsert: false, contentType: 'image/jpeg'
             });
             error = resultado.error;
             if (!error) return;
@@ -525,7 +600,17 @@ async function submitActa(e) {
             return;
         }
 
-        showLoading("Subiendo foto del acta...");
+        showLoading("Optimizando fotografía del acta...");
+        let fotoOptimizada;
+        try {
+            fotoOptimizada = await comprimirFotografiaActa(fotoFile);
+        } catch (errorCompresion) {
+            hideLoading();
+            alert(errorCompresion.message || 'No fue posible optimizar la fotografía.');
+            return;
+        }
+        const ahorro = Math.max(0, Math.round((1 - fotoOptimizada.size / fotoFile.size) * 100));
+        console.info(`Fotografía optimizada: ${(fotoFile.size / 1024 / 1024).toFixed(2)} MB → ${(fotoOptimizada.size / 1024 / 1024).toFixed(2)} MB (${ahorro}% de reducción).`);
 
         // Ruta de esta subida y estado de la escritura en la base de datos.
         // Nunca borramos una foto si no sabemos si el INSERT llegó a confirmarse.
@@ -535,11 +620,10 @@ async function submitActa(e) {
 
         try {
             // Generamos un nombre único que incluye el tipo de elección para que no se sobreescriban las fotos
-            const fileExt = fotoFile.name.split('.').pop();
             const tipoLimpio = tipoEleccionSeleccionada.replace(/\s+/g, '_');
-            const fileName = `${idCasillaAsignada}_${tipoLimpio}_${Date.now()}.${fileExt}`;
+            const fileName = `${idCasillaAsignada}_${tipoLimpio}_${Date.now()}.jpg`;
             
-            await subirFotoConReintentos(fileName, fotoFile);
+            await subirFotoConReintentos(fileName, fotoOptimizada);
             fotoSubida = fileName;
 
             const { data: publicUrlData } = cliente.storage
